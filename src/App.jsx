@@ -21,9 +21,10 @@ import {
   Users,
   Star,
   Euro,
-  Edit2
+  Edit2,
+  TrendingUp
 } from 'lucide-react';
- 
+
 /*
   ============================================================
   MODELLO DATI (come da schema concordato)
@@ -32,7 +33,7 @@ import {
   semplici oggetti JavaScript (niente TypeScript, così non devi
   configurare nulla in più nel progetto). Ogni oggetto che crei
   nell'app segue questa forma.
- 
+
   Recipe = {
     id, titolo, ingredienti: [{ id, nome, quantita, unita }],
     preparazione, porzioniBase,
@@ -41,21 +42,21 @@ import {
     categoria: [], tagDieta: [],
     ultimaVoltaCucinata, createdAt, updatedAt
   }
- 
+
   MealPlanEntry = { id, data, pasto, recipeId, porzioniScelte }
- 
+
   ShoppingListItem = {
     id, nome, quantitaTotale, unita, reparto, spuntato, origine
   }
- 
+
   PantryItem = {
     id, nome, quantita, unita, posizione, dataScadenza, barcodeAggiunto
   }
   ============================================================
 */
- 
+
 // ---------- DATI DI ESEMPIO (li sostituirai con i tuoi) ----------
- 
+
 const INITIAL_RECIPES = [
   {
     id: 'r1',
@@ -128,7 +129,7 @@ const INITIAL_RECIPES = [
     updatedAt: new Date().toISOString()
   }
 ];
- 
+
 const INITIAL_PANTRY = [
   { id: 'p1', nome: 'Latte Intero', quantita: 1, unita: 'l', posizione: 'Frigo', dataScadenza: '2026-09-18', barcodeAggiunto: false },
   { id: 'p2', nome: 'Uova Fresche', quantita: 6, unita: 'pz', posizione: 'Frigo', dataScadenza: '2026-09-22', barcodeAggiunto: false },
@@ -136,18 +137,18 @@ const INITIAL_PANTRY = [
   { id: 'p4', nome: 'Passata di Pomodoro', quantita: 800, unita: 'ml', posizione: 'Dispensa', dataScadenza: '2027-01-20', barcodeAggiunto: false },
   { id: 'p5', nome: 'Petto di Pollo', quantita: 500, unita: 'g', posizione: 'Freezer', dataScadenza: '2026-11-30', barcodeAggiunto: false }
 ];
- 
+
 const INITIAL_MEAL_PLAN = [
   { id: 'm1', data: '2026-09-16', pasto: 'pranzo', recipeId: 'r1', porzioniScelte: 4 },
   { id: 'm2', data: '2026-09-16', pasto: 'cena', recipeId: 'r3', porzioniScelte: 4 },
   { id: 'm3', data: '2026-09-17', pasto: 'pranzo', recipeId: 'r2', porzioniScelte: 4 }
 ];
- 
+
 const GIORNI_SETTIMANA = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
 const OGGI = new Date('2026-09-16');
- 
+
 const REPARTI_SUPERMERCATO = ['Da assegnare', 'Ortofrutta', 'Freschi', 'Confezionati', 'Panetteria', 'Surgelati', 'Altro'];
- 
+
 // ---------- PERSISTENZA (localStorage) ----------
 // Chiavi usate per salvare i dati nel browser. Se in futuro cambi la
 // struttura dati in modo importante, cambia anche la versione (v1 -> v2)
@@ -156,9 +157,10 @@ const STORAGE_KEYS = {
   recipes: 'dispensa-casa:recipes:v1',
   pantry: 'dispensa-casa:pantry:v1',
   mealPlan: 'dispensa-casa:mealPlan:v1',
-  shoppingList: 'dispensa-casa:shoppingList:v1'
+  shoppingList: 'dispensa-casa:shoppingList:v1',
+  storico: 'dispensa-casa:storico:v1'
 };
- 
+
 function leggiDaStorage(key, valoreIniziale) {
   try {
     const salvato = window.localStorage.getItem(key);
@@ -168,7 +170,7 @@ function leggiDaStorage(key, valoreIniziale) {
     return valoreIniziale;
   }
 }
- 
+
 function scriviSuStorage(key, valore) {
   try {
     window.localStorage.setItem(key, JSON.stringify(valore));
@@ -176,7 +178,7 @@ function scriviSuStorage(key, valore) {
     console.error(`Errore salvando ${key} su localStorage:`, err);
   }
 }
- 
+
 function dataDelGiorno(indiceGiorno) {
   // indiceGiorno: 0 = Lunedì ... 6 = Domenica, basato sulla settimana corrente (OGGI = Mercoledì)
   const oggiIndex = 2; // Mercoledì nell'array GIORNI_SETTIMANA
@@ -185,32 +187,45 @@ function dataDelGiorno(indiceGiorno) {
   d.setDate(d.getDate() + diff);
   return d.toISOString().split('T')[0];
 }
- 
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('meals'); // pantry, shopping, meals, recipes
- 
+
   const [recipes, setRecipes] = useState(() => leggiDaStorage(STORAGE_KEYS.recipes, INITIAL_RECIPES));
   const [pantry, setPantry] = useState(() => leggiDaStorage(STORAGE_KEYS.pantry, INITIAL_PANTRY));
   const [mealPlan, setMealPlan] = useState(() => leggiDaStorage(STORAGE_KEYS.mealPlan, INITIAL_MEAL_PLAN));
   const [shoppingList, setShoppingList] = useState(() => leggiDaStorage(STORAGE_KEYS.shoppingList, []));
- 
+  // Storico di ciò che entra/esce dalla dispensa, usato dalla tab Statistiche.
+  // Ogni voce: { id, nome, quantita, unita, tipo: 'acquisto'|'consumo'|'spreco', data }
+  const [storico, setStorico] = useState(() => leggiDaStorage(STORAGE_KEYS.storico, []));
+
   // Ogni volta che uno di questi dati cambia, lo salviamo subito nel browser.
   React.useEffect(() => scriviSuStorage(STORAGE_KEYS.recipes, recipes), [recipes]);
   React.useEffect(() => scriviSuStorage(STORAGE_KEYS.pantry, pantry), [pantry]);
   React.useEffect(() => scriviSuStorage(STORAGE_KEYS.mealPlan, mealPlan), [mealPlan]);
   React.useEffect(() => scriviSuStorage(STORAGE_KEYS.shoppingList, shoppingList), [shoppingList]);
- 
+  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.storico, storico), [storico]);
+
+  const registraStorico = (voci) => {
+    const arr = Array.isArray(voci) ? voci : [voci];
+    const oggiStr = OGGI.toISOString().split('T')[0];
+    setStorico((prev) => [
+      ...prev,
+      ...arr.map((v) => ({ id: Date.now().toString() + Math.random().toString().slice(2, 6), data: oggiStr, ...v }))
+    ]);
+  };
+
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('Tutti');
   const [expandedRecipeTime, setExpandedRecipeTime] = useState({}); // { [recipeId]: true/false }
   const [selectedRecipeId, setSelectedRecipeId] = useState(null); // ricetta aperta in vista dettaglio
   const [pendingDelete, setPendingDelete] = useState(null); // { tipo: 'pantry'|'recipe'|'shopping', id, nome }
- 
+
   // Stati per le modali "Aggiungi/Modifica Prodotto" e "Nuova/Modifica Ricetta"
   const [isAddPantryOpen, setIsAddPantryOpen] = useState(false);
   const [editingPantryId, setEditingPantryId] = useState(null); // null = sto aggiungendo, id = sto modificando
   const [newPantryItem, setNewPantryItem] = useState({ nome: '', quantita: 1, unita: 'pz', posizione: 'Frigo', dataScadenza: '' });
- 
+
   const [isAddRecipeOpen, setIsAddRecipeOpen] = useState(false);
   const [editingRecipeId, setEditingRecipeId] = useState(null); // null = sto aggiungendo, id = sto modificando
   const RICETTA_VUOTA = {
@@ -228,17 +243,24 @@ export default function App() {
     tagDieta: ''
   };
   const [newRecipe, setNewRecipe] = useState(RICETTA_VUOTA);
- 
+
+  // Stati per l'importazione ricette da link (Instagram/TikTok) via Gemini
+  const [isImportOpen, setIsImportOpen] = useState(false);
+  const [importUrl, setImportUrl] = useState('');
+  const [importTestoManuale, setImportTestoManuale] = useState('');
+  const [importStato, setImportStato] = useState('inserisci'); // 'inserisci' | 'caricando' | 'errore' | 'chiediTesto'
+  const [importErroreMsg, setImportErroreMsg] = useState('');
+
   const [toastMessage, setToastMessage] = useState(null);
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3000);
   };
- 
+
   // ---------- HELPERS ----------
- 
+
   const getRecipeById = (id) => recipes.find((r) => r.id === id);
- 
+
   const getExpiryStatus = (dateString) => {
     if (!dateString) return { label: 'N/D', color: 'bg-gray-100 text-gray-700 border-gray-200' };
     const expDate = new Date(dateString);
@@ -247,7 +269,7 @@ export default function App() {
     if (diffDays <= 3) return { label: `In scadenza (${diffDays}g)`, color: 'bg-amber-100 text-amber-800 border-amber-300 font-medium' };
     return { label: `Fresco (${diffDays}g)`, color: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
   };
- 
+
   // Ricalcolo automatico quantità ingredienti in base alle porzioni scelte
   const ingredientiScalati = (recipe, porzioniScelte) => {
     const fattore = porzioniScelte / recipe.porzioniBase;
@@ -256,16 +278,16 @@ export default function App() {
       quantita: Math.round(ing.quantita * fattore * 100) / 100
     }));
   };
- 
+
   // ---------- GESTIONE PIANO PASTI ----------
- 
+
   // Quante volte è "distante" una data da oggi, in giorni (positivo = passato, negativo = futuro)
   const giorniDaOggi = (dataString) => {
     if (!dataString) return null;
     const d = new Date(dataString);
     return Math.round((OGGI - d) / (1000 * 60 * 60 * 24));
   };
- 
+
   const setMealForSlot = (indiceGiorno, pasto, recipeId) => {
     const data = dataDelGiorno(indiceGiorno);
     setMealPlan((prev) => {
@@ -286,7 +308,7 @@ export default function App() {
         }
       ];
     });
- 
+
     // Aggiorniamo "ultimaVoltaCucinata" sulla ricetta, solo se la data pianificata
     // non è nel futuro (se stai pianificando per tra 3 giorni, non l'hai ancora cucinata!)
     // e solo se è più recente di quella già salvata.
@@ -300,21 +322,97 @@ export default function App() {
       );
     }
   };
- 
+
+  // ---------- GENERAZIONE AUTOMATICA DEL PIANO ----------
+
+  // Quali giorni della settimana sono selezionati per la generazione automatica
+  const [giorniSelezionatiAuto, setGiorniSelezionatiAuto] = useState(() => GIORNI_SETTIMANA.map(() => false));
+
+  const toggleGiornoAuto = (indiceGiorno) => {
+    setGiorniSelezionatiAuto((prev) => prev.map((v, i) => (i === indiceGiorno ? !v : v)));
+  };
+
+  // Più tempo è passato dall'ultima volta che una ricetta è stata cucinata, più "peso" ha
+  // nella scelta casuale (quindi più probabile) — le ricette recenti non sono escluse, solo
+  // meno probabili. Le ricette mai cucinate hanno il peso massimo.
+  const pesoRicetta = (recipe) => {
+    const g = giorniDaOggi(recipe.ultimaVoltaCucinata);
+    if (g === null) return 10;
+    return Math.min(10, Math.max(1, g));
+  };
+
+  const sceglieRicettaPesata = (pool, esclusiInQuestoGiro) => {
+    let candidati = pool.filter((r) => !esclusiInQuestoGiro.has(r.id));
+    if (candidati.length === 0) candidati = pool;
+    if (candidati.length === 0) return null;
+    const pesi = candidati.map(pesoRicetta);
+    const totale = pesi.reduce((a, b) => a + b, 0);
+    let r = Math.random() * totale;
+    for (let i = 0; i < candidati.length; i++) {
+      r -= pesi[i];
+      if (r <= 0) return candidati[i];
+    }
+    return candidati[candidati.length - 1];
+  };
+
+  const generaPianoAutomatico = () => {
+    const indiciSelezionati = giorniSelezionatiAuto
+      .map((v, i) => (v ? i : null))
+      .filter((i) => i !== null);
+
+    if (indiciSelezionati.length === 0) {
+      showToast('Seleziona almeno un giorno da pianificare.');
+      return;
+    }
+    if (recipes.length === 0) {
+      showToast('Aggiungi prima qualche ricetta al ricettario.');
+      return;
+    }
+
+    const usateInQuestoGiro = new Set();
+    let generati = 0;
+
+    indiciSelezionati.forEach((indiceGiorno) => {
+      const data = dataDelGiorno(indiceGiorno);
+      ['pranzo', 'cena'].forEach((pasto) => {
+        // Non sovrascriviamo pasti già pianificati a mano
+        const esiste = mealPlan.find((m) => m.data === data && m.pasto === pasto);
+        if (esiste) return;
+
+        // Preferiamo ricette adatte a quel pasto, se la ricetta ha una categoria impostata
+        let pool = recipes.filter((r) => r.categoria.length === 0 || r.categoria.includes(pasto));
+        if (pool.length === 0) pool = recipes;
+
+        const scelta = sceglieRicettaPesata(pool, usateInQuestoGiro);
+        if (!scelta) return;
+
+        usateInQuestoGiro.add(scelta.id);
+        setMealForSlot(indiceGiorno, pasto, scelta.id);
+        generati++;
+      });
+    });
+
+    if (generati === 0) {
+      showToast('I giorni selezionati erano già completamente pianificati.');
+    } else {
+      showToast(`Generati ${generati} pasti per i giorni selezionati!`);
+    }
+  };
+
   const updatePorzioni = (entryId, delta) => {
     setMealPlan((prev) =>
       prev.map((m) => (m.id === entryId ? { ...m, porzioniScelte: Math.max(1, m.porzioniScelte + delta) } : m))
     );
   };
- 
+
   const removeMeal = (entryId) => {
     setMealPlan((prev) => prev.filter((m) => m.id !== entryId));
   };
- 
+
   // Genera la lista della spesa aggregando gli ingredienti di tutti i pasti pianificati
   const generaListaSpesaDaPiano = () => {
     const aggregati = {}; // chiave: "nome|unita" -> quantitaTotale
- 
+
     mealPlan.forEach((entry) => {
       const recipe = getRecipeById(entry.recipeId);
       if (!recipe) return;
@@ -327,45 +425,55 @@ export default function App() {
         aggregati[chiave].quantitaTotale += ing.quantita;
       });
     });
- 
+
     const nuoviArticoli = Object.values(aggregati).map((item) => ({
       id: Date.now().toString() + Math.random().toString().slice(2, 6),
       nome: item.nome,
-      quantitaTotale: Math.round(item.quantitaTotale * 100) / 100,
+      quantitaTotale: Math.ceil(item.quantitaTotale),
       unita: item.unita,
       reparto: 'Da assegnare',
       spuntato: false,
       origine: 'piano'
     }));
- 
+
     setShoppingList((prev) => {
       // Rimuovi i vecchi articoli generati dal piano (non tocca quelli aggiunti manualmente) e rimetti i nuovi
       const manuali = prev.filter((item) => item.origine === 'manuale');
       return [...manuali, ...nuoviArticoli];
     });
- 
+
     showToast('Lista della spesa generata dal piano pasti!');
     setActiveTab('shopping');
   };
- 
+
   const toggleShoppingCheck = (id) => {
     setShoppingList((prev) => prev.map((item) => (item.id === id ? { ...item, spuntato: !item.spuntato } : item)));
   };
- 
+
   const updateShoppingItemReparto = (id, reparto) => {
     setShoppingList((prev) => prev.map((item) => (item.id === id ? { ...item, reparto } : item)));
   };
- 
+
   const removeShoppingItem = (id) => {
     setShoppingList((prev) => prev.filter((item) => item.id !== id));
   };
- 
+
   // Esegue davvero l'eliminazione dopo che l'utente ha confermato nella modale
   const confermaEliminazione = () => {
     if (!pendingDelete) return;
     const { tipo, id, nome } = pendingDelete;
     if (tipo === 'pantry') {
-      setPantry((prev) => prev.filter((item) => item.id !== id));
+      const item = pantry.find((p) => p.id === id);
+      if (item) {
+        const eraScaduto = item.dataScadenza && new Date(item.dataScadenza) < OGGI;
+        registraStorico({
+          nome: item.nome,
+          quantita: item.quantita,
+          unita: item.unita,
+          tipo: eraScaduto ? 'spreco' : 'consumo'
+        });
+      }
+      setPantry((prev) => prev.filter((p) => p.id !== id));
       showToast(`"${nome}" eliminato dalla dispensa.`);
     } else if (tipo === 'recipe') {
       setRecipes((prev) => prev.filter((r) => r.id !== id));
@@ -376,7 +484,7 @@ export default function App() {
     }
     setPendingDelete(null);
   };
- 
+
   // Prova a indovinare il reparto in base al nome del prodotto (euristica semplice, non AI).
   // Non è fondamentale: se non trova nulla, resta "Da assegnare" e l'utente lo cambia a mano.
   const REPARTO_KEYWORDS = {
@@ -393,7 +501,7 @@ export default function App() {
     }
     return 'Da assegnare';
   };
- 
+
   const [nuovoArticoloSpesa, setNuovoArticoloSpesa] = useState('');
   const [nuovoArticoloQuantita, setNuovoArticoloQuantita] = useState(1);
   const [nuovoArticoloUnita, setNuovoArticoloUnita] = useState('pz');
@@ -415,7 +523,7 @@ export default function App() {
     setNuovoArticoloQuantita(1);
     setNuovoArticoloUnita('pz');
   };
- 
+
   const transferPurchasedToPantry = () => {
     const acquistati = shoppingList.filter((item) => item.spuntato);
     if (acquistati.length === 0) {
@@ -433,25 +541,26 @@ export default function App() {
     }));
     setPantry((prev) => [...prev, ...nuovi]);
     setShoppingList((prev) => prev.filter((item) => !item.spuntato));
+    registraStorico(nuovi.map((n) => ({ nome: n.nome, quantita: n.quantita, unita: n.unita, tipo: 'acquisto' })));
     showToast(`${acquistati.length} prodotti trasferiti in dispensa!`);
   };
- 
+
   // ---------- DISPENSA ----------
- 
+
   const updatePantryQuantity = (id, delta) => {
     setPantry((prev) =>
       prev.map((item) => (item.id === id ? { ...item, quantita: Math.max(0, item.quantita + delta) } : item))
     );
   };
- 
+
   const deletePantryItem = (id) => {
     setPantry((prev) => prev.filter((item) => item.id !== id));
   };
- 
+
   const handleAddPantryItem = (e) => {
     e.preventDefault();
     if (!newPantryItem.nome.trim()) return;
- 
+
     if (editingPantryId) {
       // Sto modificando un prodotto esistente
       setPantry((prev) =>
@@ -483,14 +592,20 @@ export default function App() {
           barcodeAggiunto: false
         }
       ]);
+      registraStorico({
+        nome: newPantryItem.nome,
+        quantita: Number(newPantryItem.quantita) || 1,
+        unita: newPantryItem.unita,
+        tipo: 'acquisto'
+      });
       showToast(`"${newPantryItem.nome}" aggiunto alla dispensa!`);
     }
- 
+
     setNewPantryItem({ nome: '', quantita: 1, unita: 'pz', posizione: 'Frigo', dataScadenza: '' });
     setEditingPantryId(null);
     setIsAddPantryOpen(false);
   };
- 
+
   const apriModificaPantry = (item) => {
     setNewPantryItem({
       nome: item.nome,
@@ -502,7 +617,7 @@ export default function App() {
     setEditingPantryId(item.id);
     setIsAddPantryOpen(true);
   };
- 
+
   const filteredPantry = useMemo(() => {
     return pantry
       .filter((item) => {
@@ -518,59 +633,96 @@ export default function App() {
         return new Date(a.dataScadenza) - new Date(b.dataScadenza);
       });
   }, [pantry, searchQuery, categoryFilter]);
- 
-  const expiringCount = pantry.filter((item) => {
-    if (!item.dataScadenza) return false;
-    const diffDays = Math.ceil((new Date(item.dataScadenza) - OGGI) / (1000 * 60 * 60 * 24));
-    return diffDays <= 3;
-  }).length;
- 
+
+  // Prodotti in scadenza entro 3 giorni (o già scaduti) — usati sia per il banner che per la notifica
+  const prodottiInScadenza = useMemo(() => {
+    return pantry.filter((item) => {
+      if (!item.dataScadenza) return false;
+      const diffDays = Math.ceil((new Date(item.dataScadenza) - OGGI) / (1000 * 60 * 60 * 24));
+      return diffDays <= 3;
+    });
+  }, [pantry]);
+  const expiringCount = prodottiInScadenza.length;
+
+  const [bannerScadenzeChiuso, setBannerScadenzeChiuso] = useState(false);
+
   const toggleTempoEspanso = (recipeId) => {
     setExpandedRecipeTime((prev) => ({ ...prev, [recipeId]: !prev[recipeId] }));
   };
- 
+
+  // ---------- STATISTICHE ----------
+
+  const statistiche = useMemo(() => {
+    const acquisti = storico.filter((s) => s.tipo === 'acquisto');
+    const consumi = storico.filter((s) => s.tipo === 'consumo');
+    const sprechi = storico.filter((s) => s.tipo === 'spreco');
+
+    const raggruppaPerNome = (lista) => {
+      const conteggio = {};
+      lista.forEach((v) => {
+        conteggio[v.nome] = (conteggio[v.nome] || 0) + 1;
+      });
+      return Object.entries(conteggio)
+        .map(([nome, count]) => ({ nome, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5);
+    };
+
+    const rimossiTotali = consumi.length + sprechi.length;
+    const percentualeSpreco = rimossiTotali > 0 ? Math.round((sprechi.length / rimossiTotali) * 100) : 0;
+
+    return {
+      totaleAcquisti: acquisti.length,
+      totaleConsumi: consumi.length,
+      totaleSprechi: sprechi.length,
+      percentualeSpreco,
+      topAcquistati: raggruppaPerNome(acquisti),
+      topSprecati: raggruppaPerNome(sprechi)
+    };
+  }, [storico]);
+
   // ---------- GESTIONE FORM NUOVA RICETTA ----------
- 
+
   const aggiungiRigaIngrediente = () => {
     setNewRecipe((prev) => ({
       ...prev,
       ingredienti: [...prev.ingredienti, { id: 'tmp' + Date.now(), nome: '', quantita: 1, unita: 'pz' }]
     }));
   };
- 
+
   const rimuoviRigaIngrediente = (id) => {
     setNewRecipe((prev) => ({
       ...prev,
       ingredienti: prev.ingredienti.filter((ing) => ing.id !== id)
     }));
   };
- 
+
   const aggiornaIngrediente = (id, campo, valore) => {
     setNewRecipe((prev) => ({
       ...prev,
       ingredienti: prev.ingredienti.map((ing) => (ing.id === id ? { ...ing, [campo]: valore } : ing))
     }));
   };
- 
+
   const toggleCategoriaRicetta = (cat) => {
     setNewRecipe((prev) => ({
       ...prev,
       categoria: prev.categoria.includes(cat) ? prev.categoria.filter((c) => c !== cat) : [...prev.categoria, cat]
     }));
   };
- 
+
   const handleAddRecipe = (e) => {
     e.preventDefault();
     if (!newRecipe.titolo.trim()) return;
- 
+
     const ingredientiPuliti = newRecipe.ingredienti
       .filter((ing) => ing.nome.trim())
       .map((ing) => ({ ...ing, quantita: Number(ing.quantita) || 0 }));
- 
+
     const tagDietaArray = newRecipe.tagDieta
       ? newRecipe.tagDieta.split(',').map((t) => t.trim()).filter(Boolean)
       : [];
- 
+
     if (editingRecipeId) {
       // Sto modificando una ricetta esistente
       setRecipes((prev) =>
@@ -619,12 +771,12 @@ export default function App() {
       setRecipes((prev) => [...prev, ricettaFinale]);
       showToast(`Ricetta "${ricettaFinale.titolo}" salvata!`);
     }
- 
+
     setNewRecipe(RICETTA_VUOTA);
     setEditingRecipeId(null);
     setIsAddRecipeOpen(false);
   };
- 
+
   const apriModificaRicetta = (recipe) => {
     setNewRecipe({
       titolo: recipe.titolo,
@@ -645,12 +797,71 @@ export default function App() {
     setEditingRecipeId(recipe.id);
     setIsAddRecipeOpen(true);
   };
- 
+
   const deleteRecipe = (id) => {
     setRecipes((prev) => prev.filter((r) => r.id !== id));
     showToast('Ricetta eliminata.');
   };
- 
+
+  // ---------- IMPORTAZIONE RICETTA DA LINK ----------
+
+  const eseguiImportazione = async ({ url, testoManuale }) => {
+    setImportStato('caricando');
+    setImportErroreMsg('');
+    try {
+      const res = await fetch('/.netlify/functions/importa-ricetta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(testoManuale ? { testoManuale } : { url })
+      });
+      const dati = await res.json();
+
+      if (dati.errore) {
+        if (dati.suggerimento === 'incolla_testo') {
+          setImportStato('chiediTesto');
+        } else {
+          setImportErroreMsg(dati.errore);
+          setImportStato('errore');
+        }
+        return;
+      }
+
+      const r = dati.ricetta || {};
+      const ingredientiImportati =
+        Array.isArray(r.ingredienti) && r.ingredienti.length > 0
+          ? r.ingredienti.map((ing, i) => ({
+              id: 'imp' + i,
+              nome: ing.nome || '',
+              quantita: Number(ing.quantita) || 0,
+              unita: ing.unita || 'pz'
+            }))
+          : [{ id: 'imp0', nome: '', quantita: 1, unita: 'pz' }];
+
+      setNewRecipe({
+        titolo: r.titolo || '',
+        ingredienti: ingredientiImportati,
+        preparazione: r.preparazione || '',
+        porzioniBase: r.porzioniBase || 4,
+        tempoPreparazioneMin: r.tempoPreparazioneMin || 0,
+        tempoCotturaMin: r.tempoCotturaMin || 0,
+        bonta: 3,
+        prezzo: 1,
+        notePersonali: '',
+        fonte: url || '',
+        categoria: Array.isArray(r.categoria) ? r.categoria : [],
+        tagDieta: Array.isArray(r.tagDieta) ? r.tagDieta.join(', ') : ''
+      });
+      setEditingRecipeId(null);
+      setIsImportOpen(false);
+      setIsAddRecipeOpen(true);
+      showToast('Ricetta importata — controllala prima di salvare!');
+    } catch (err) {
+      console.error('Errore importazione ricetta:', err);
+      setImportErroreMsg('Errore di connessione con il server. Riprova.');
+      setImportStato('errore');
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col">
       {/* HEADER */}
@@ -668,7 +879,7 @@ export default function App() {
                 <p className="text-xs text-emerald-200">Gestione spesa, scorte e pasti intelligenti</p>
               </div>
             </div>
- 
+
             <div className="hidden md:flex items-center gap-4 text-xs font-medium">
               <div className="bg-emerald-800/60 border border-emerald-600/50 rounded-lg px-3 py-1.5 flex items-center gap-2">
                 <Package className="w-4 h-4 text-emerald-300" />
@@ -683,14 +894,15 @@ export default function App() {
             </div>
           </div>
         </div>
- 
+
         <div className="bg-emerald-800/80 backdrop-blur-md border-t border-emerald-600/40">
           <div className="max-w-7xl mx-auto px-4 flex space-x-2 sm:space-x-6 overflow-x-auto scrollbar-none">
             {[
               { id: 'pantry', label: 'Dispensa & Frigo', icon: Refrigerator },
               { id: 'shopping', label: 'Lista Spesa', icon: ShoppingBag },
               { id: 'meals', label: 'Pianificatore Pasti', icon: Calendar },
-              { id: 'recipes', label: 'Ricettario', icon: Sparkles }
+              { id: 'recipes', label: 'Ricettario', icon: Sparkles },
+              { id: 'stats', label: 'Statistiche', icon: TrendingUp }
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -708,18 +920,32 @@ export default function App() {
           </div>
         </div>
       </header>
- 
+
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-3 border border-slate-700">
           <CheckCircle className="w-5 h-5 text-emerald-400" />
           <span className="text-sm font-medium">{toastMessage}</span>
         </div>
       )}
- 
+
       <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
         {/* ---------- TAB: DISPENSA ---------- */}
         {activeTab === 'pantry' && (
           <div className="space-y-6">
+            {prodottiInScadenza.length > 0 && !bannerScadenzeChiuso && (
+              <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-amber-800">
+                    {prodottiInScadenza.length} prodott{prodottiInScadenza.length === 1 ? 'o' : 'i'} in scadenza entro 3 giorni
+                  </p>
+                  <p className="text-xs text-amber-700 mt-0.5">
+                    {prodottiInScadenza.map((p) => p.nome).join(', ')}
+                  </p>
+                </div>
+                <button onClick={() => setBannerScadenzeChiuso(true)} className="text-amber-400 hover:text-amber-700 text-lg leading-none px-1 shrink-0">×</button>
+              </div>
+            )}
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-col md:flex-row gap-4 items-center justify-between">
               <div className="relative w-full md:w-96">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 w-4 h-4" />
@@ -744,7 +970,7 @@ export default function App() {
                   </button>
                 ))}
               </div>
- 
+
               <button
                 onClick={() => { setEditingPantryId(null); setNewPantryItem({ nome: '', quantita: 1, unita: 'pz', posizione: 'Frigo', dataScadenza: '' }); setIsAddPantryOpen(true); }}
                 className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm hover:shadow transition"
@@ -753,7 +979,7 @@ export default function App() {
                 <span>Aggiungi Prodotto</span>
               </button>
             </div>
- 
+
             {filteredPantry.length === 0 ? (
               <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300">
                 <Refrigerator className="w-12 h-12 text-slate-300 mx-auto mb-3" />
@@ -767,34 +993,33 @@ export default function App() {
                 </p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5 sm:gap-4">
                 {filteredPantry.map((item) => {
                 const expiry = getExpiryStatus(item.dataScadenza);
                 return (
-                  <div key={item.id} className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
+                  <div key={item.id} className="bg-white rounded-xl sm:rounded-2xl p-2.5 sm:p-4 border border-slate-200 shadow-sm hover:shadow-md transition flex flex-col justify-between">
                     <div>
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200">
+                      <div className="flex justify-between items-start mb-1.5 sm:mb-2 gap-1">
+                        <span className="text-[9px] sm:text-[11px] font-bold uppercase tracking-wider px-1.5 sm:px-2 py-0.5 rounded-md bg-blue-50 text-blue-700 border border-blue-200 truncate">
                           {item.posizione}
                         </span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full border ${expiry.color}`}>{expiry.label}</span>
+                        <span className={`text-[9px] sm:text-xs px-1.5 sm:px-2 py-0.5 rounded-full border whitespace-nowrap ${expiry.color}`}>{expiry.label}</span>
                       </div>
-                      <h3 className="font-bold text-slate-800 text-base mb-1">{item.nome}</h3>
-                      <div className="flex items-center space-x-3 my-3 bg-slate-50 p-2 rounded-xl border border-slate-100 justify-between">
-                        <span className="text-xs text-slate-500 font-medium">Quantità:</span>
-                        <div className="flex items-center space-x-2">
-                          <button onClick={() => updatePantryQuantity(item.id, -1)} className="w-7 h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm">-</button>
-                          <span className="text-sm font-bold text-slate-800 px-1">{item.quantita} {item.unita}</span>
-                          <button onClick={() => updatePantryQuantity(item.id, 1)} className="w-7 h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm">+</button>
+                      <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-1 leading-tight">{item.nome}</h3>
+                      <div className="flex items-center gap-1 sm:space-x-3 my-2 sm:my-3 bg-slate-50 p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-slate-100 justify-between">
+                        <div className="flex items-center gap-1 sm:space-x-2 w-full justify-between">
+                          <button onClick={() => updatePantryQuantity(item.id, -1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">-</button>
+                          <span className="text-xs sm:text-sm font-bold text-slate-800 px-0.5 sm:px-1 truncate">{item.quantita} {item.unita}</span>
+                          <button onClick={() => updatePantryQuantity(item.id, 1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">+</button>
                         </div>
                       </div>
                     </div>
-                    <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-1 mt-2">
-                      <button onClick={() => apriModificaPantry(item)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Modifica">
-                        <Edit2 className="w-4 h-4" />
+                    <div className="pt-2 sm:pt-3 border-t border-slate-100 flex items-center justify-end gap-1 mt-1 sm:mt-2">
+                      <button onClick={() => apriModificaPantry(item)} className="p-1 sm:p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition" title="Modifica">
+                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </button>
-                      <button onClick={() => setPendingDelete({ tipo: 'pantry', id: item.id, nome: item.nome })} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Elimina/Consumato">
-                        <Trash2 className="w-4 h-4" />
+                      <button onClick={() => setPendingDelete({ tipo: 'pantry', id: item.id, nome: item.nome })} className="p-1 sm:p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition" title="Elimina/Consumato">
+                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                       </button>
                     </div>
                   </div>
@@ -804,7 +1029,7 @@ export default function App() {
             )}
           </div>
         )}
- 
+
         {/* ---------- TAB: LISTA SPESA ---------- */}
         {activeTab === 'shopping' && (
           <div className="max-w-4xl mx-auto space-y-6">
@@ -820,7 +1045,7 @@ export default function App() {
                 </button>
               </div>
             </div>
- 
+
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-2">
               <input
                 type="text"
@@ -859,7 +1084,7 @@ export default function App() {
                 <span>Aggiungi</span>
               </button>
             </div>
- 
+
             <div className="space-y-4">
               {shoppingList.length === 0 && (
                 <div className="text-center py-12 bg-white rounded-2xl border border-dashed border-slate-300">
@@ -868,7 +1093,7 @@ export default function App() {
                   <p className="text-xs text-slate-400 mt-1">Genera la lista dal Pianificatore Pasti o aggiungi articoli a mano.</p>
                 </div>
               )}
- 
+
               {REPARTI_SUPERMERCATO.map((reparto) => {
                 const itemsReparto = shoppingList.filter((item) => (item.reparto || 'Da assegnare') === reparto);
                 if (itemsReparto.length === 0) return null;
@@ -910,7 +1135,7 @@ export default function App() {
             </div>
           </div>
         )}
- 
+
         {/* ---------- TAB: PIANIFICATORE PASTI ---------- */}
         {activeTab === 'meals' && (
           <div className="space-y-6">
@@ -925,7 +1150,39 @@ export default function App() {
               </button>
               <ChefHat className="absolute -right-6 -bottom-6 w-36 h-36 text-emerald-800/40 pointer-events-none" />
             </div>
- 
+
+            <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+              <h3 className="text-sm font-bold text-slate-700 mb-1 flex items-center gap-1.5">
+                <Zap className="w-4 h-4 text-amber-500" /> Generazione automatica
+              </h3>
+              <p className="text-xs text-slate-400 mb-3">
+                Seleziona i giorni da riempire: pranzo e cena verranno assegnati automaticamente (solo dove non hai già scelto tu una ricetta), preferendo quelle che non cucini da più tempo.
+              </p>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {GIORNI_SETTIMANA.map((day, i) => (
+                  <button
+                    key={day}
+                    type="button"
+                    onClick={() => toggleGiornoAuto(i)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
+                      giorniSelezionatiAuto[i]
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {day.slice(0, 3)}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={generaPianoAutomatico}
+                className="w-full sm:w-auto bg-slate-800 hover:bg-slate-900 text-white font-medium px-4 py-2 rounded-xl text-xs flex items-center justify-center gap-2 transition"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>Genera Pasti per i Giorni Selezionati</span>
+              </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {GIORNI_SETTIMANA.map((day, indiceGiorno) => {
                 const data = dataDelGiorno(indiceGiorno);
@@ -935,7 +1192,7 @@ export default function App() {
                       <span className="font-black text-sm text-emerald-700 tracking-wide uppercase">{day}</span>
                       <Calendar className="w-4 h-4 text-slate-400" />
                     </div>
- 
+
                     {['pranzo', 'cena'].map((pasto) => {
                       const entry = mealPlan.find((m) => m.data === data && m.pasto === pasto);
                       const recipe = entry ? getRecipeById(entry.recipeId) : null;
@@ -945,7 +1202,7 @@ export default function App() {
                             <Flame className={`w-3.5 h-3.5 ${pasto === 'pranzo' ? 'text-amber-500' : 'text-indigo-500'}`} />
                             <span>{pasto.toUpperCase()}</span>
                           </div>
- 
+
                           <select
                             value={entry ? entry.recipeId : ''}
                             onChange={(e) => setMealForSlot(indiceGiorno, pasto, e.target.value)}
@@ -962,7 +1219,7 @@ export default function App() {
                               );
                             })}
                           </select>
- 
+
                           {entry && recipe && (
                             <div className="flex items-center justify-between mt-2">
                               <div className="flex items-center gap-1 text-xs text-slate-500">
@@ -985,7 +1242,7 @@ export default function App() {
             </div>
           </div>
         )}
- 
+
         {/* ---------- TAB: RICETTARIO ---------- */}
         {activeTab === 'recipes' && (
           <div className="space-y-6">
@@ -1003,6 +1260,13 @@ export default function App() {
                   <span>{recipes.length} ricette salvate</span>
                 </div>
                 <button
+                  onClick={() => { setIsImportOpen(true); setImportStato('inserisci'); setImportUrl(''); setImportTestoManuale(''); setImportErroreMsg(''); }}
+                  className="bg-white/15 hover:bg-white/25 text-white font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 transition border border-white/20"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Importa da link</span>
+                </button>
+                <button
                   onClick={() => { setEditingRecipeId(null); setNewRecipe(RICETTA_VUOTA); setIsAddRecipeOpen(true); }}
                   className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold px-4 py-2 rounded-xl text-xs flex items-center gap-2 transition"
                 >
@@ -1011,7 +1275,7 @@ export default function App() {
                 </button>
               </div>
             </div>
- 
+
             {recipes.length === 0 ? (
               <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300">
                 <Sparkles className="w-12 h-12 text-slate-300 mx-auto mb-3" />
@@ -1041,17 +1305,17 @@ export default function App() {
                         </button>
                         <div className="flex items-center gap-2">
                           <span className="flex items-center gap-0.5"><Star className="w-3 h-3 text-amber-400" />{recipe.bonta}/5</span>
-                          <span className="flex items-center gap-0.5"><Euro className="w-3 h-3 text-emerald-500" />{'€'.repeat(recipe.prezzo)}</span>
+                          <span className="flex items-center gap-0.5"><Euro className="w-3 h-3 text-emerald-500" />{recipe.prezzo}/5</span>
                         </div>
                       </div>
- 
+
                       {espanso && (
                         <div className="text-[11px] text-slate-500 mb-2 flex gap-3 bg-slate-50 rounded-lg px-2 py-1.5">
                           <span>Preparazione: {recipe.tempoPreparazioneMin} min</span>
                           <span>Cottura: {recipe.tempoCotturaMin} min</span>
                         </div>
                       )}
- 
+
                       <h3 className="text-base font-bold text-slate-800 mb-1">{recipe.titolo}</h3>
                       <p className="text-[11px] text-slate-400 mb-2 flex items-center gap-1">
                         <RefreshCw className="w-3 h-3" />
@@ -1064,11 +1328,11 @@ export default function App() {
                             })()
                           : 'Mai cucinata'}
                       </p>
- 
+
                       <p className="text-xs text-slate-600 leading-relaxed mb-4 bg-slate-50 p-3 rounded-xl border border-slate-100 line-clamp-3">
                         {recipe.preparazione}
                       </p>
- 
+
                       <div className="space-y-2">
                         <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
                           Ingredienti (per {recipe.porzioniBase} persone):
@@ -1084,7 +1348,7 @@ export default function App() {
                           )}
                         </div>
                       </div>
- 
+
                       <p className="text-xs font-semibold text-emerald-700 mt-3 flex items-center gap-1">
                         Apri ricetta completa <ChevronDown className="w-3 h-3 -rotate-90" />
                       </p>
@@ -1104,8 +1368,101 @@ export default function App() {
             )}
           </div>
         )}
+
+        {/* ---------- TAB: STATISTICHE ---------- */}
+        {activeTab === 'stats' && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-r from-slate-700 to-slate-900 text-white p-6 rounded-2xl shadow-md">
+              <h2 className="text-xl font-black flex items-center gap-2">
+                <TrendingUp className="w-5 h-5" /> Statistiche
+              </h2>
+              <p className="text-xs text-slate-300 mt-1">Cosa entra ed esce dalla tua dispensa nel tempo.</p>
+            </div>
+
+            {storico.length === 0 ? (
+              <div className="text-center py-16 bg-white rounded-2xl border border-dashed border-slate-300">
+                <TrendingUp className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                <h3 className="text-base font-semibold text-slate-700">Ancora nessun dato</h3>
+                <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                  Le statistiche si popolano man mano che aggiungi prodotti alla dispensa (a mano o dalla spesa) e li elimini una volta consumati.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+                    <p className="text-2xl font-black text-slate-800">{statistiche.totaleAcquisti}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Prodotti acquistati</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+                    <p className="text-2xl font-black text-emerald-600">{statistiche.totaleConsumi}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Consumati</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+                    <p className="text-2xl font-black text-red-500">{statistiche.totaleSprechi}</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Sprecati (scaduti)</p>
+                  </div>
+                  <div className="bg-white rounded-2xl p-4 border border-slate-200 shadow-sm">
+                    <p className="text-2xl font-black text-amber-600">{statistiche.percentualeSpreco}%</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Tasso di spreco</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-slate-700 mb-3">Prodotti più acquistati</h3>
+                    {statistiche.topAcquistati.length === 0 ? (
+                      <p className="text-xs text-slate-400">Nessun acquisto registrato ancora.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {statistiche.topAcquistati.map((p) => (
+                          <div key={p.nome}>
+                            <div className="flex justify-between text-xs text-slate-600 mb-1">
+                              <span className="truncate">{p.nome}</span>
+                              <span className="font-semibold">{p.count}×</span>
+                            </div>
+                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-emerald-500 rounded-full"
+                                style={{ width: `${(p.count / statistiche.topAcquistati[0].count) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm">
+                    <h3 className="text-sm font-bold text-slate-700 mb-3">Prodotti sprecati più spesso</h3>
+                    {statistiche.topSprecati.length === 0 ? (
+                      <p className="text-xs text-slate-400">Nessuno spreco registrato — ottimo lavoro!</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {statistiche.topSprecati.map((p) => (
+                          <div key={p.nome}>
+                            <div className="flex justify-between text-xs text-slate-600 mb-1">
+                              <span className="truncate">{p.nome}</span>
+                              <span className="font-semibold">{p.count}×</span>
+                            </div>
+                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-red-400 rounded-full"
+                                style={{ width: `${(p.count / statistiche.topSprecati[0].count) * 100}%` }}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </main>
- 
+
       {/* ---------- MODALE: AGGIUNGI PRODOTTO IN DISPENSA ---------- */}
       {isAddPantryOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -1124,7 +1481,7 @@ export default function App() {
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
- 
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Posizione</label>
@@ -1148,14 +1505,14 @@ export default function App() {
                   />
                 </div>
               </div>
- 
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Quantità</label>
                   <input
                     type="number"
                     step="any"
-                    min="1"
+                    min="0"
                     value={newPantryItem.quantita}
                     onChange={(e) => setNewPantryItem({ ...newPantryItem, quantita: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
@@ -1172,7 +1529,7 @@ export default function App() {
                   />
                 </div>
               </div>
- 
+
               <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
@@ -1192,7 +1549,95 @@ export default function App() {
           </div>
         </div>
       )}
- 
+
+      {/* ---------- MODALE: IMPORTA RICETTA DA LINK ---------- */}
+      {isImportOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-slate-100">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-slate-800">Importa ricetta da link</h3>
+              <button onClick={() => setIsImportOpen(false)} className="text-slate-400 hover:text-slate-700 text-xl leading-none px-1">×</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">Incolla un link Instagram o TikTok con una ricetta.</p>
+
+            {importStato === 'inserisci' && (
+              <div className="space-y-3">
+                <input
+                  type="text"
+                  autoFocus
+                  placeholder="https://www.tiktok.com/... oppure instagram.com/..."
+                  value={importUrl}
+                  onChange={(e) => setImportUrl(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button
+                  onClick={() => eseguiImportazione({ url: importUrl })}
+                  disabled={!importUrl.trim()}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition"
+                >
+                  Importa
+                </button>
+                <button
+                  onClick={() => setImportStato('chiediTesto')}
+                  className="w-full text-xs text-slate-500 hover:text-slate-700 underline"
+                >
+                  Preferisco incollare il testo a mano
+                </button>
+              </div>
+            )}
+
+            {importStato === 'caricando' && (
+              <div className="text-center py-8">
+                <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm text-slate-500">Analizzo il contenuto, un momento...</p>
+              </div>
+            )}
+
+            {importStato === 'errore' && (
+              <div className="text-center py-4">
+                <AlertTriangle className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+                <p className="text-sm text-slate-600 mb-4">{importErroreMsg}</p>
+                <button
+                  onClick={() => setImportStato('inserisci')}
+                  className="px-4 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white rounded-xl transition mr-2"
+                >
+                  Riprova
+                </button>
+                <button
+                  onClick={() => setImportStato('chiediTesto')}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition"
+                >
+                  Incolla testo a mano
+                </button>
+              </div>
+            )}
+
+            {importStato === 'chiediTesto' && (
+              <div className="space-y-3">
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                  Copia la didascalia del post (o scrivi tu la ricetta) e incollala qui sotto.
+                </p>
+                <textarea
+                  rows="6"
+                  autoFocus
+                  placeholder="Incolla qui il testo della ricetta..."
+                  value={importTestoManuale}
+                  onChange={(e) => setImportTestoManuale(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+                <button
+                  onClick={() => eseguiImportazione({ testoManuale: importTestoManuale })}
+                  disabled={!importTestoManuale.trim()}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-semibold px-4 py-2.5 rounded-xl text-sm transition"
+                >
+                  Estrai ricetta da questo testo
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ---------- MODALE: NUOVA RICETTA ---------- */}
       {isAddRecipeOpen && (
         <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
@@ -1211,7 +1656,7 @@ export default function App() {
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
- 
+
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Porzioni base</label>
@@ -1247,7 +1692,7 @@ export default function App() {
                   />
                 </div>
               </div>
- 
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Bontà (1-5)</label>
@@ -1262,19 +1707,19 @@ export default function App() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Prezzo (1-3)</label>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Prezzo (1-5)</label>
                   <input
                     type="number"
-                    step="any"
+                    step="1"
                     min="1"
-                    max="3"
+                    max="5"
                     value={newRecipe.prezzo}
                     onChange={(e) => setNewRecipe({ ...newRecipe, prezzo: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
                 </div>
               </div>
- 
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Categoria</label>
                 <div className="flex flex-wrap gap-2">
@@ -1294,7 +1739,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
- 
+
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-semibold text-slate-600">Ingredienti</label>
@@ -1345,7 +1790,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
- 
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Preparazione</label>
                 <textarea
@@ -1356,7 +1801,7 @@ export default function App() {
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
- 
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Tag dieta (separati da virgola)</label>
@@ -1379,7 +1824,7 @@ export default function App() {
                   />
                 </div>
               </div>
- 
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Note personali</label>
                 <input
@@ -1390,7 +1835,7 @@ export default function App() {
                   className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
- 
+
               <div className="flex items-center justify-end space-x-2 pt-4 border-t border-slate-100">
                 <button
                   type="button"
@@ -1410,7 +1855,7 @@ export default function App() {
           </div>
         </div>
       )}
- 
+
       {/* ---------- MODALE: DETTAGLIO RICETTA COMPLETO ---------- */}
       {selectedRecipeId && (() => {
         const recipe = getRecipeById(selectedRecipeId);
@@ -1441,10 +1886,10 @@ export default function App() {
                   <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{recipe.tempoPreparazioneMin}min prep. + {recipe.tempoCotturaMin}min cottura</span>
                   <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Users className="w-3.5 h-3.5" />{recipe.porzioniBase} porzioni base</span>
                   <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Star className="w-3.5 h-3.5" />{recipe.bonta}/5</span>
-                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Euro className="w-3.5 h-3.5" />{'€'.repeat(recipe.prezzo)}</span>
+                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Euro className="w-3.5 h-3.5" />{recipe.prezzo}/5</span>
                 </div>
               </div>
- 
+
               <div className="p-6 space-y-5">
                 {(recipe.categoria.length > 0 || recipe.tagDieta.length > 0) && (
                   <div className="flex flex-wrap gap-1.5">
@@ -1456,7 +1901,7 @@ export default function App() {
                     ))}
                   </div>
                 )}
- 
+
                 <div>
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
                     Ingredienti (per {recipe.porzioniBase} persone)
@@ -1469,19 +1914,19 @@ export default function App() {
                     ))}
                   </div>
                 </div>
- 
+
                 <div>
                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Preparazione</h4>
                   <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{recipe.preparazione}</p>
                 </div>
- 
+
                 {recipe.notePersonali && (
                   <div>
                     <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Note personali</h4>
                     <p className="text-sm text-slate-600 italic">{recipe.notePersonali}</p>
                   </div>
                 )}
- 
+
                 {recipe.fonte && (
                   <div>
                     <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Fonte</h4>
@@ -1489,7 +1934,7 @@ export default function App() {
                   </div>
                 )}
               </div>
- 
+
               <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
                 <button
                   onClick={() => { apriModificaRicetta(recipe); setSelectedRecipeId(null); }}
@@ -1508,7 +1953,7 @@ export default function App() {
           </div>
         );
       })()}
- 
+
       {/* ---------- MODALE: CONFERMA ELIMINAZIONE ---------- */}
       {pendingDelete && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -1542,6 +1987,3 @@ export default function App() {
     </div>
   );
 }
- 
-
-
