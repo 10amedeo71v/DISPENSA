@@ -164,7 +164,7 @@ async function chiediRicettaAGemini({ testo, videoBase64, videoMimeType, apiKey 
     throw new Error('Nessun contenuto da analizzare.');
   }
 
-  const modello = 'gemini-2.5-flash';
+  const modello = 'gemini-3.6-flash';
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent?key=${apiKey}`,
     {
