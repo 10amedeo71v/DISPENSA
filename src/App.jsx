@@ -145,7 +145,10 @@ const INITIAL_MEAL_PLAN = [
 ];
 
 const GIORNI_SETTIMANA = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
-const OGGI = new Date('2026-09-16');
+// Data odierna reale, azzerata alle 00:00 per confronti "a giorno" corretti
+// (senza azzerare l'ora, un prodotto in scadenza "oggi" alle 23:59 risulterebbe già scaduto).
+const OGGI = new Date();
+OGGI.setHours(0, 0, 0, 0);
 
 const REPARTI_SUPERMERCATO = ['Da assegnare', 'Ortofrutta', 'Freschi', 'Confezionati', 'Panetteria', 'Surgelati', 'Altro'];
 
@@ -180,12 +183,89 @@ function scriviSuStorage(key, valore) {
 }
 
 function dataDelGiorno(indiceGiorno) {
-  // indiceGiorno: 0 = Lunedì ... 6 = Domenica, basato sulla settimana corrente (OGGI = Mercoledì)
-  const oggiIndex = 2; // Mercoledì nell'array GIORNI_SETTIMANA
+  // indiceGiorno: 0 = Lunedì ... 6 = Domenica, basato sulla settimana corrente.
+  // Date.getDay() restituisce 0 = Domenica ... 6 = Sabato: lo convertiamo
+  // nello stesso schema Lunedì=0...Domenica=6 usato da GIORNI_SETTIMANA.
+  const giornoSettimanaJS = OGGI.getDay(); // 0 = Domenica ... 6 = Sabato
+  const oggiIndex = (giornoSettimanaJS + 6) % 7; // 0 = Lunedì ... 6 = Domenica
   const diff = indiceGiorno - oggiIndex;
   const d = new Date(OGGI);
   d.setDate(d.getDate() + diff);
   return d.toISOString().split('T')[0];
+}
+
+// Riga di lista che si può trascinare verso sinistra per rivelare un bottone
+// "elimina" rosso. Usata nella Lista Spesa al posto del bottone + conferma:
+// lo swipe stesso è già un gesto deliberato, quindi qui l'eliminazione è immediata.
+// isOpen/onOpenChange sono "sollevati" al componente genitore così che aprendo
+// una riga si richiuda automaticamente quella aperta in precedenza.
+function SwipeableRow({ id, label, isOpen, onOpenChange, onDelete, children }) {
+  const DELETE_WIDTH = 72;
+  const [dragX, setDragX] = useState(isOpen ? -DELETE_WIDTH : 0);
+  const [isDragging, setIsDragging] = useState(false);
+  const startXRef = React.useRef(0);
+  const baseXRef = React.useRef(0);
+
+  React.useEffect(() => {
+    setDragX(isOpen ? -DELETE_WIDTH : 0);
+  }, [isOpen]);
+
+  const handlePointerDown = (e) => {
+    startXRef.current = e.clientX;
+    baseXRef.current = dragX;
+    setIsDragging(true);
+  };
+  const handlePointerMove = (e) => {
+    if (!isDragging) return;
+    const delta = e.clientX - startXRef.current;
+    setDragX(Math.min(0, Math.max(-DELETE_WIDTH, baseXRef.current + delta)));
+  };
+  const finisciTrascinamento = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
+    if (dragX <= -DELETE_WIDTH / 2) {
+      setDragX(-DELETE_WIDTH);
+      onOpenChange(id);
+    } else {
+      setDragX(0);
+      onOpenChange(null);
+    }
+  };
+
+  return (
+    <div className="relative overflow-hidden">
+      <button
+        onClick={() => onDelete(id)}
+        className="absolute inset-y-0 right-0 bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-colors"
+        style={{ width: DELETE_WIDTH }}
+        aria-label={`Elimina ${label}`}
+      >
+        <Trash2 className="w-4 h-4" />
+      </button>
+      <div
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={finisciTrascinamento}
+        onPointerCancel={finisciTrascinamento}
+        // Se la riga è già aperta, un semplice tap la richiude invece di attivare
+        // il click sottostante (es. spunta l'articolo) — comportamento standard iOS.
+        onClickCapture={(e) => {
+          if (isOpen) {
+            e.stopPropagation();
+            onOpenChange(null);
+          }
+        }}
+        style={{
+          transform: `translateX(${dragX}px)`,
+          transition: isDragging ? 'none' : 'transform 150ms ease-out',
+          touchAction: 'pan-y'
+        }}
+        className="relative bg-white"
+      >
+        {children}
+      </div>
+    </div>
+  );
 }
 
 export default function App() {
@@ -219,7 +299,8 @@ export default function App() {
   const [categoryFilter, setCategoryFilter] = useState('Tutti');
   const [expandedRecipeTime, setExpandedRecipeTime] = useState({}); // { [recipeId]: true/false }
   const [selectedRecipeId, setSelectedRecipeId] = useState(null); // ricetta aperta in vista dettaglio
-  const [pendingDelete, setPendingDelete] = useState(null); // { tipo: 'pantry'|'recipe'|'shopping', id, nome }
+  const [pendingDelete, setPendingDelete] = useState(null); // { tipo: 'pantry'|'recipe'|'giorno', id, nome }
+  const [swipeOpenItemId, setSwipeOpenItemId] = useState(null); // id dell'articolo lista spesa con lo swipe aperto
 
   // Stati per le modali "Aggiungi/Modifica Prodotto" e "Nuova/Modifica Ricetta"
   const [isAddPantryOpen, setIsAddPantryOpen] = useState(false);
@@ -455,7 +536,10 @@ export default function App() {
   };
 
   const removeShoppingItem = (id) => {
-    setShoppingList((prev) => prev.filter((item) => item.id !== id));
+    const item = shoppingList.find((i) => i.id === id);
+    setShoppingList((prev) => prev.filter((i) => i.id !== id));
+    setSwipeOpenItemId(null);
+    if (item) showToast(`"${item.nome}" rimosso dalla lista.`);
   };
 
   // Esegue davvero l'eliminazione dopo che l'utente ha confermato nella modale
@@ -478,9 +562,10 @@ export default function App() {
     } else if (tipo === 'recipe') {
       setRecipes((prev) => prev.filter((r) => r.id !== id));
       showToast(`Ricetta "${nome}" eliminata.`);
-    } else if (tipo === 'shopping') {
-      setShoppingList((prev) => prev.filter((item) => item.id !== id));
-      showToast(`"${nome}" rimosso dalla lista.`);
+    } else if (tipo === 'giorno') {
+      // id qui è la data (es. '2026-09-24'): svuota sia pranzo che cena di quel giorno
+      setMealPlan((prev) => prev.filter((m) => m.data !== id));
+      showToast(`Pranzo e cena di ${nome} svuotati.`);
     }
     setPendingDelete(null);
   };
@@ -1105,28 +1190,34 @@ export default function App() {
                     </div>
                     <div className="divide-y divide-slate-100">
                       {itemsReparto.map((item) => (
-                        <div key={item.id} className={`p-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition ${item.spuntato ? 'bg-slate-50/80' : ''}`}>
-                          <div onClick={() => toggleShoppingCheck(item.id)} className="flex items-center space-x-3 cursor-pointer flex-1 min-w-0">
-                            {item.spuntato ? <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" /> : <Circle className="w-5 h-5 text-slate-300 shrink-0" />}
-                            <div className="min-w-0">
-                              <p className={`text-sm font-semibold truncate ${item.spuntato ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.nome}</p>
-                              <p className="text-xs text-slate-400 mt-0.5">{item.quantitaTotale} {item.unita} · {item.origine === 'piano' ? 'dal piano pasti' : 'manuale'}</p>
+                        <SwipeableRow
+                          key={item.id}
+                          id={item.id}
+                          label={item.nome}
+                          isOpen={swipeOpenItemId === item.id}
+                          onOpenChange={setSwipeOpenItemId}
+                          onDelete={removeShoppingItem}
+                        >
+                          <div className={`p-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition ${item.spuntato ? 'bg-slate-50/80' : ''}`}>
+                            <div onClick={() => toggleShoppingCheck(item.id)} className="flex items-center space-x-3 cursor-pointer flex-1 min-w-0">
+                              {item.spuntato ? <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" /> : <Circle className="w-5 h-5 text-slate-300 shrink-0" />}
+                              <div className="min-w-0">
+                                <p className={`text-sm font-semibold truncate ${item.spuntato ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.nome}</p>
+                                <p className="text-xs text-slate-400 mt-0.5">{item.quantitaTotale} {item.unita} · {item.origine === 'piano' ? 'dal piano pasti' : 'manuale'}</p>
+                              </div>
                             </div>
+                            <select
+                              value={item.reparto || 'Da assegnare'}
+                              onChange={(e) => updateShoppingItemReparto(item.id, e.target.value)}
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500 shrink-0"
+                            >
+                              {REPARTI_SUPERMERCATO.map((r) => (
+                                <option key={r} value={r}>{r}</option>
+                              ))}
+                            </select>
                           </div>
-                          <select
-                            value={item.reparto || 'Da assegnare'}
-                            onChange={(e) => updateShoppingItemReparto(item.id, e.target.value)}
-                            onClick={(e) => e.stopPropagation()}
-                            className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500 shrink-0"
-                          >
-                            {REPARTI_SUPERMERCATO.map((r) => (
-                              <option key={r} value={r}>{r}</option>
-                            ))}
-                          </select>
-                          <button onClick={() => setPendingDelete({ tipo: 'shopping', id: item.id, nome: item.nome })} className="text-slate-300 hover:text-red-500 p-1.5 transition shrink-0">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
-                        </div>
+                        </SwipeableRow>
                       ))}
                     </div>
                   </div>
@@ -1186,11 +1277,23 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {GIORNI_SETTIMANA.map((day, indiceGiorno) => {
                 const data = dataDelGiorno(indiceGiorno);
+                const giornoHaPasti = mealPlan.some((m) => m.data === data);
                 return (
                   <div key={day} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
                       <span className="font-black text-sm text-emerald-700 tracking-wide uppercase">{day}</span>
-                      <Calendar className="w-4 h-4 text-slate-400" />
+                      <div className="flex items-center gap-2">
+                        {giornoHaPasti && (
+                          <button
+                            onClick={() => setPendingDelete({ tipo: 'giorno', id: data, nome: day })}
+                            className="text-slate-300 hover:text-red-500 transition"
+                            title={`Svuota ${day}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <Calendar className="w-4 h-4 text-slate-400" />
+                      </div>
                     </div>
 
                     {['pranzo', 'cena'].map((pasto) => {
