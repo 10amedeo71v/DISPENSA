@@ -1,4 +1,8 @@
 import React, { useState, useMemo } from 'react';
+import { usePersistentState } from './hooks/usePersistentState.js';
+import { usePantry } from './hooks/usePantry.js';
+import { STORAGE_KEYS } from './utils/storage.js';
+import { OGGI, dataDelGiorno, giorniAllaData, giorniDaOggi, formattaDataLocale } from './utils/date.js';
 import {
   ShoppingBag,
   Refrigerator,
@@ -50,7 +54,7 @@ import {
   }
 
   PantryItem = {
-    id, nome, quantita, unita, posizione, dataScadenza, barcodeAggiunto
+    id, nome, quantita, unita, posizione, dataScadenza
   }
   ============================================================
 */
@@ -131,11 +135,11 @@ const INITIAL_RECIPES = [
 ];
 
 const INITIAL_PANTRY = [
-  { id: 'p1', nome: 'Latte Intero', quantita: 1, unita: 'l', posizione: 'Frigo', dataScadenza: '2026-09-18', barcodeAggiunto: false },
-  { id: 'p2', nome: 'Uova Fresche', quantita: 6, unita: 'pz', posizione: 'Frigo', dataScadenza: '2026-09-22', barcodeAggiunto: false },
-  { id: 'p3', nome: 'Pasta Spaghetti n.5', quantita: 640, unita: 'g', posizione: 'Dispensa', dataScadenza: '2027-04-10', barcodeAggiunto: false },
-  { id: 'p4', nome: 'Passata di Pomodoro', quantita: 800, unita: 'ml', posizione: 'Dispensa', dataScadenza: '2027-01-20', barcodeAggiunto: false },
-  { id: 'p5', nome: 'Petto di Pollo', quantita: 500, unita: 'g', posizione: 'Freezer', dataScadenza: '2026-11-30', barcodeAggiunto: false }
+  { id: 'p1', nome: 'Latte Intero', quantita: 1, unita: 'l', posizione: 'Frigo', dataScadenza: '2026-09-18' },
+  { id: 'p2', nome: 'Uova Fresche', quantita: 6, unita: 'pz', posizione: 'Frigo', dataScadenza: '2026-09-22' },
+  { id: 'p3', nome: 'Pasta Spaghetti n.5', quantita: 640, unita: 'g', posizione: 'Dispensa', dataScadenza: '2027-04-10' },
+  { id: 'p4', nome: 'Passata di Pomodoro', quantita: 800, unita: 'ml', posizione: 'Dispensa', dataScadenza: '2027-01-20' },
+  { id: 'p5', nome: 'Petto di Pollo', quantita: 500, unita: 'g', posizione: 'Freezer', dataScadenza: '2026-11-30' }
 ];
 
 const INITIAL_MEAL_PLAN = [
@@ -145,54 +149,7 @@ const INITIAL_MEAL_PLAN = [
 ];
 
 const GIORNI_SETTIMANA = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
-// Data odierna reale, azzerata alle 00:00 per confronti "a giorno" corretti
-// (senza azzerare l'ora, un prodotto in scadenza "oggi" alle 23:59 risulterebbe già scaduto).
-const OGGI = new Date();
-OGGI.setHours(0, 0, 0, 0);
-
 const REPARTI_SUPERMERCATO = ['Da assegnare', 'Ortofrutta', 'Freschi', 'Confezionati', 'Panetteria', 'Surgelati', 'Altro'];
-
-// ---------- PERSISTENZA (localStorage) ----------
-// Chiavi usate per salvare i dati nel browser. Se in futuro cambi la
-// struttura dati in modo importante, cambia anche la versione (v1 -> v2)
-// così i vecchi dati salvati non creano conflitti con il nuovo formato.
-const STORAGE_KEYS = {
-  recipes: 'dispensa-casa:recipes:v1',
-  pantry: 'dispensa-casa:pantry:v1',
-  mealPlan: 'dispensa-casa:mealPlan:v1',
-  shoppingList: 'dispensa-casa:shoppingList:v1',
-  storico: 'dispensa-casa:storico:v1'
-};
-
-function leggiDaStorage(key, valoreIniziale) {
-  try {
-    const salvato = window.localStorage.getItem(key);
-    return salvato ? JSON.parse(salvato) : valoreIniziale;
-  } catch (err) {
-    console.error(`Errore leggendo ${key} da localStorage:`, err);
-    return valoreIniziale;
-  }
-}
-
-function scriviSuStorage(key, valore) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(valore));
-  } catch (err) {
-    console.error(`Errore salvando ${key} su localStorage:`, err);
-  }
-}
-
-function dataDelGiorno(indiceGiorno) {
-  // indiceGiorno: 0 = Lunedì ... 6 = Domenica, basato sulla settimana corrente.
-  // Date.getDay() restituisce 0 = Domenica ... 6 = Sabato: lo convertiamo
-  // nello stesso schema Lunedì=0...Domenica=6 usato da GIORNI_SETTIMANA.
-  const giornoSettimanaJS = OGGI.getDay(); // 0 = Domenica ... 6 = Sabato
-  const oggiIndex = (giornoSettimanaJS + 6) % 7; // 0 = Lunedì ... 6 = Domenica
-  const diff = indiceGiorno - oggiIndex;
-  const d = new Date(OGGI);
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().split('T')[0];
-}
 
 // Riga di lista che si può trascinare verso sinistra per rivelare un bottone
 // "elimina" rosso. Usata nella Lista Spesa al posto del bottone + conferma:
@@ -268,32 +225,60 @@ function SwipeableRow({ id, label, isOpen, onOpenChange, onDelete, children }) {
   );
 }
 
+// Sfondo scuro sfocato comune a tutte le modali dell'app. Prima ogni modale
+// scriveva questo markup a mano, con piccole incoerenze (opacità 40 vs 50,
+// gestione scroll diversa) — ora c'è un solo punto da aggiornare per tutte.
+function ModalBackdrop({ children, scrollable = false, zIndexClass = 'z-50', onClick }) {
+  return (
+    <div
+      onClick={onClick}
+      className={`fixed inset-0 bg-slate-900/45 backdrop-blur-sm ${zIndexClass} flex items-center justify-center p-4 ${scrollable ? 'overflow-y-auto' : ''}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('meals'); // pantry, shopping, meals, recipes
 
-  const [recipes, setRecipes] = useState(() => leggiDaStorage(STORAGE_KEYS.recipes, INITIAL_RECIPES));
-  const [pantry, setPantry] = useState(() => leggiDaStorage(STORAGE_KEYS.pantry, INITIAL_PANTRY));
-  const [mealPlan, setMealPlan] = useState(() => leggiDaStorage(STORAGE_KEYS.mealPlan, INITIAL_MEAL_PLAN));
-  const [shoppingList, setShoppingList] = useState(() => leggiDaStorage(STORAGE_KEYS.shoppingList, []));
+  // Stato dell'avviso "salvataggio non riuscito": ricordiamo quali chiavi
+  // hanno fallito e mostriamo il banner finché tutte tornano a salvare bene.
+  const chiaviSalvataggioFallite = React.useRef(new Set());
+  const [erroreSalvataggio, setErroreSalvataggio] = useState(false);
+  const segnalaSalvataggio = (key, riuscito) => {
+    if (riuscito) chiaviSalvataggioFallite.current.delete(key);
+    else chiaviSalvataggioFallite.current.add(key);
+    setErroreSalvataggio(chiaviSalvataggioFallite.current.size > 0);
+  };
+
+  // Questi dati vengono letti da localStorage all'avvio e salvati a ogni modifica.
+  const [recipes, setRecipes] = usePersistentState(STORAGE_KEYS.recipes, INITIAL_RECIPES, segnalaSalvataggio);
+  const [mealPlan, setMealPlan] = usePersistentState(STORAGE_KEYS.mealPlan, INITIAL_MEAL_PLAN, segnalaSalvataggio);
+  const [shoppingList, setShoppingList] = usePersistentState(STORAGE_KEYS.shoppingList, [], segnalaSalvataggio);
   // Storico di ciò che entra/esce dalla dispensa, usato dalla tab Statistiche.
   // Ogni voce: { id, nome, quantita, unita, tipo: 'acquisto'|'consumo'|'spreco', data }
-  const [storico, setStorico] = useState(() => leggiDaStorage(STORAGE_KEYS.storico, []));
-
-  // Ogni volta che uno di questi dati cambia, lo salviamo subito nel browser.
-  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.recipes, recipes), [recipes]);
-  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.pantry, pantry), [pantry]);
-  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.mealPlan, mealPlan), [mealPlan]);
-  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.shoppingList, shoppingList), [shoppingList]);
-  React.useEffect(() => scriviSuStorage(STORAGE_KEYS.storico, storico), [storico]);
+  const [storico, setStorico] = usePersistentState(STORAGE_KEYS.storico, [], segnalaSalvataggio);
 
   const registraStorico = (voci) => {
     const arr = Array.isArray(voci) ? voci : [voci];
-    const oggiStr = OGGI.toISOString().split('T')[0];
+    const oggiStr = formattaDataLocale(OGGI);
     setStorico((prev) => [
       ...prev,
       ...arr.map((v) => ({ id: Date.now().toString() + Math.random().toString().slice(2, 6), data: oggiStr, ...v }))
     ]);
   };
+
+  // Dispensa: dati + operazioni (aggiungi, modifica, quantità, rimuovi, scadenze)
+  const {
+    pantry,
+    aggiungiProdotto,
+    aggiungiProdotti,
+    modificaProdotto,
+    cambiaQuantita,
+    rimuoviProdotto,
+    prodottiInScadenza
+  } = usePantry({ valoreIniziale: INITIAL_PANTRY, segnalaSalvataggio, registraStorico });
 
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('Tutti');
@@ -332,6 +317,12 @@ export default function App() {
   const [importStato, setImportStato] = useState('inserisci'); // 'inserisci' | 'caricando' | 'errore' | 'chiediTesto'
   const [importErroreMsg, setImportErroreMsg] = useState('');
 
+  // Stati per i suggerimenti di ricette in base alla dispensa ("Cosa cucino?") via Gemini
+  const [isSuggerisciOpen, setIsSuggerisciOpen] = useState(false);
+  const [suggerimento, setSuggerimento] = useState({ stato: 'caricando', ricetta: null, errore: '' }); // stato: 'caricando' | 'pronto' | 'errore'
+  const [titoliSuggeriti, setTitoliSuggeriti] = useState([]); // titoli già proposti in questa sessione, per non ripeterli
+  const richiestaSuggerimentoId = React.useRef(0); // serve a ignorare risposte arrivate dopo aver chiuso la finestra
+
   const [toastMessage, setToastMessage] = useState(null);
   const showToast = (msg) => {
     setToastMessage(msg);
@@ -344,8 +335,7 @@ export default function App() {
 
   const getExpiryStatus = (dateString) => {
     if (!dateString) return { label: 'N/D', color: 'bg-gray-100 text-gray-700 border-gray-200' };
-    const expDate = new Date(dateString);
-    const diffDays = Math.ceil((expDate - OGGI) / (1000 * 60 * 60 * 24));
+    const diffDays = giorniAllaData(dateString);
     if (diffDays < 0) return { label: `Scaduto (${Math.abs(diffDays)}g fa)`, color: 'bg-red-100 text-red-700 border-red-300 font-semibold' };
     if (diffDays <= 3) return { label: `In scadenza (${diffDays}g)`, color: 'bg-amber-100 text-amber-800 border-amber-300 font-medium' };
     return { label: `Fresco (${diffDays}g)`, color: 'bg-emerald-100 text-emerald-800 border-emerald-200' };
@@ -361,13 +351,6 @@ export default function App() {
   };
 
   // ---------- GESTIONE PIANO PASTI ----------
-
-  // Quante volte è "distante" una data da oggi, in giorni (positivo = passato, negativo = futuro)
-  const giorniDaOggi = (dataString) => {
-    if (!dataString) return null;
-    const d = new Date(dataString);
-    return Math.round((OGGI - d) / (1000 * 60 * 60 * 24));
-  };
 
   const setMealForSlot = (indiceGiorno, pasto, recipeId) => {
     const data = dataDelGiorno(indiceGiorno);
@@ -547,17 +530,7 @@ export default function App() {
     if (!pendingDelete) return;
     const { tipo, id, nome } = pendingDelete;
     if (tipo === 'pantry') {
-      const item = pantry.find((p) => p.id === id);
-      if (item) {
-        const eraScaduto = item.dataScadenza && new Date(item.dataScadenza) < OGGI;
-        registraStorico({
-          nome: item.nome,
-          quantita: item.quantita,
-          unita: item.unita,
-          tipo: eraScaduto ? 'spreco' : 'consumo'
-        });
-      }
-      setPantry((prev) => prev.filter((p) => p.id !== id));
+      rimuoviProdotto(id);
       showToast(`"${nome}" eliminato dalla dispensa.`);
     } else if (tipo === 'recipe') {
       setRecipes((prev) => prev.filter((r) => r.id !== id));
@@ -615,32 +588,20 @@ export default function App() {
       showToast('Nessun articolo spuntato da trasferire!');
       return;
     }
-    const nuovi = acquistati.map((item) => ({
-      id: Date.now().toString() + Math.random().toString().slice(2, 6),
-      nome: item.nome,
-      quantita: item.quantitaTotale,
-      unita: item.unita,
-      posizione: 'Dispensa',
-      dataScadenza: null,
-      barcodeAggiunto: false
-    }));
-    setPantry((prev) => [...prev, ...nuovi]);
+    aggiungiProdotti(
+      acquistati.map((item) => ({
+        nome: item.nome,
+        quantita: item.quantitaTotale,
+        unita: item.unita,
+        posizione: 'Dispensa',
+        dataScadenza: null
+      }))
+    );
     setShoppingList((prev) => prev.filter((item) => !item.spuntato));
-    registraStorico(nuovi.map((n) => ({ nome: n.nome, quantita: n.quantita, unita: n.unita, tipo: 'acquisto' })));
     showToast(`${acquistati.length} prodotti trasferiti in dispensa!`);
   };
 
   // ---------- DISPENSA ----------
-
-  const updatePantryQuantity = (id, delta) => {
-    setPantry((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, quantita: Math.max(0, item.quantita + delta) } : item))
-    );
-  };
-
-  const deletePantryItem = (id) => {
-    setPantry((prev) => prev.filter((item) => item.id !== id));
-  };
 
   const handleAddPantryItem = (e) => {
     e.preventDefault();
@@ -648,41 +609,11 @@ export default function App() {
 
     if (editingPantryId) {
       // Sto modificando un prodotto esistente
-      setPantry((prev) =>
-        prev.map((item) =>
-          item.id === editingPantryId
-            ? {
-                ...item,
-                nome: newPantryItem.nome,
-                quantita: Number(newPantryItem.quantita) || 1,
-                unita: newPantryItem.unita,
-                posizione: newPantryItem.posizione,
-                dataScadenza: newPantryItem.dataScadenza || null
-              }
-            : item
-        )
-      );
+      modificaProdotto(editingPantryId, newPantryItem);
       showToast(`"${newPantryItem.nome}" aggiornato!`);
     } else {
       // Sto aggiungendo un prodotto nuovo
-      setPantry((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          nome: newPantryItem.nome,
-          quantita: Number(newPantryItem.quantita) || 1,
-          unita: newPantryItem.unita,
-          posizione: newPantryItem.posizione,
-          dataScadenza: newPantryItem.dataScadenza || null,
-          barcodeAggiunto: false
-        }
-      ]);
-      registraStorico({
-        nome: newPantryItem.nome,
-        quantita: Number(newPantryItem.quantita) || 1,
-        unita: newPantryItem.unita,
-        tipo: 'acquisto'
-      });
+      aggiungiProdotto(newPantryItem);
       showToast(`"${newPantryItem.nome}" aggiunto alla dispensa!`);
     }
 
@@ -719,14 +650,6 @@ export default function App() {
       });
   }, [pantry, searchQuery, categoryFilter]);
 
-  // Prodotti in scadenza entro 3 giorni (o già scaduti) — usati sia per il banner che per la notifica
-  const prodottiInScadenza = useMemo(() => {
-    return pantry.filter((item) => {
-      if (!item.dataScadenza) return false;
-      const diffDays = Math.ceil((new Date(item.dataScadenza) - OGGI) / (1000 * 60 * 60 * 24));
-      return diffDays <= 3;
-    });
-  }, [pantry]);
   const expiringCount = prodottiInScadenza.length;
 
   const [bannerScadenzeChiuso, setBannerScadenzeChiuso] = useState(false);
@@ -947,6 +870,85 @@ export default function App() {
     }
   };
 
+  // ---------- SUGGERIMENTI RICETTE DALLA DISPENSA ----------
+
+  const chiediSuggerimento = async (titoliDaEvitare) => {
+    const idRichiesta = ++richiestaSuggerimentoId.current;
+
+    // Mandiamo solo ciò che è davvero utilizzabile: niente prodotti finiti o già scaduti.
+    const dispensa = pantry
+      .filter((p) => p.quantita > 0 && !(p.dataScadenza && giorniAllaData(p.dataScadenza) < 0))
+      .map((p) => ({
+        nome: p.nome,
+        quantita: p.quantita,
+        unita: p.unita,
+        scadeTraGiorni: p.dataScadenza ? giorniAllaData(p.dataScadenza) : null
+      }));
+
+    if (dispensa.length === 0) {
+      setSuggerimento({ stato: 'errore', ricetta: null, errore: 'In dispensa non c\'è nulla di utilizzabile (vuota, finito o scaduto).' });
+      return;
+    }
+
+    setSuggerimento({ stato: 'caricando', ricetta: null, errore: '' });
+    try {
+      const res = await fetch('/.netlify/functions/suggerisci-ricetta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dispensa, evita: titoliDaEvitare })
+      });
+      const dati = await res.json();
+      if (idRichiesta !== richiestaSuggerimentoId.current) return; // finestra chiusa o nuova richiesta nel frattempo
+
+      if (!res.ok || dati.errore || !dati.ricetta) {
+        setSuggerimento({ stato: 'errore', ricetta: null, errore: dati.errore || 'Non sono riuscito a ottenere un suggerimento.' });
+        return;
+      }
+      setSuggerimento({ stato: 'pronto', ricetta: dati.ricetta, errore: '' });
+      setTitoliSuggeriti((prev) => [...prev, dati.ricetta.titolo]);
+    } catch (err) {
+      if (idRichiesta !== richiestaSuggerimentoId.current) return;
+      console.error('Errore suggerimento ricetta:', err);
+      setSuggerimento({ stato: 'errore', ricetta: null, errore: 'Errore di connessione con il server. Riprova.' });
+    }
+  };
+
+  const apriSuggerimenti = () => {
+    setTitoliSuggeriti([]);
+    setIsSuggerisciOpen(true);
+    chiediSuggerimento([]);
+  };
+
+  const chiudiSuggerimenti = () => {
+    richiestaSuggerimentoId.current += 1; // ignora eventuali risposte ancora in arrivo
+    setIsSuggerisciOpen(false);
+  };
+
+  // Apre il form "Nuova ricetta" già compilato con la proposta, da controllare e salvare
+  const salvaSuggerimentoComeRicetta = () => {
+    const r = suggerimento.ricetta;
+    if (!r) return;
+    const daComprare = r.ingredienti.filter((ing) => !ing.inDispensa).map((ing) => ing.nome);
+    setNewRecipe({
+      titolo: r.titolo,
+      ingredienti: r.ingredienti.map((ing, i) => ({ id: 'sug' + i, nome: ing.nome, quantita: ing.quantita, unita: ing.unita })),
+      preparazione: r.preparazione,
+      porzioniBase: r.porzioniBase,
+      tempoPreparazioneMin: r.tempoPreparazioneMin,
+      tempoCotturaMin: r.tempoCotturaMin,
+      bonta: 3,
+      prezzo: 1,
+      notePersonali: daComprare.length > 0 ? `Da comprare: ${daComprare.join(', ')}` : '',
+      fonte: 'Suggerita dall\'AI',
+      categoria: r.categoria,
+      tagDieta: r.tagDieta.join(', ')
+    });
+    setEditingRecipeId(null);
+    chiudiSuggerimenti();
+    setIsAddRecipeOpen(true);
+    showToast('Ricetta pronta — controllala prima di salvare!');
+  };
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans flex flex-col">
       {/* HEADER */}
@@ -1006,6 +1008,15 @@ export default function App() {
         </div>
       </header>
 
+      {erroreSalvataggio && (
+        <div role="alert" className="bg-red-600 text-white text-sm px-4 py-2.5 flex items-start gap-2">
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <span>
+            <span className="font-bold">Salvataggio non riuscito.</span> Le ultime modifiche non vengono memorizzate su questo dispositivo e potrebbero andare perse alla chiusura. Controlla di non essere in navigazione privata e che ci sia spazio libero.
+          </span>
+        </div>
+      )}
+
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-3 border border-slate-700">
           <CheckCircle className="w-5 h-5 text-emerald-400" />
@@ -1056,13 +1067,22 @@ export default function App() {
                 ))}
               </div>
 
-              <button
-                onClick={() => { setEditingPantryId(null); setNewPantryItem({ nome: '', quantita: 1, unita: 'pz', posizione: 'Frigo', dataScadenza: '' }); setIsAddPantryOpen(true); }}
-                className="w-full md:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm hover:shadow transition"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Aggiungi Prodotto</span>
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2 w-full md:w-auto">
+                <button
+                  onClick={apriSuggerimenti}
+                  className="w-full sm:w-auto bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 font-medium px-4 py-2 rounded-xl text-sm flex items-center justify-center gap-2 transition"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Cosa cucino?</span>
+                </button>
+                <button
+                  onClick={() => { setEditingPantryId(null); setNewPantryItem({ nome: '', quantita: 1, unita: 'pz', posizione: 'Frigo', dataScadenza: '' }); setIsAddPantryOpen(true); }}
+                  className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-medium px-4 py-2 rounded-xl text-sm flex items-center justify-center gap-2 shadow-sm hover:shadow transition"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Aggiungi Prodotto</span>
+                </button>
+              </div>
             </div>
 
             {filteredPantry.length === 0 ? (
@@ -1093,9 +1113,9 @@ export default function App() {
                       <h3 className="font-bold text-slate-800 text-sm sm:text-base mb-1 leading-tight">{item.nome}</h3>
                       <div className="flex items-center gap-1 sm:space-x-3 my-2 sm:my-3 bg-slate-50 p-1.5 sm:p-2 rounded-lg sm:rounded-xl border border-slate-100 justify-between">
                         <div className="flex items-center gap-1 sm:space-x-2 w-full justify-between">
-                          <button onClick={() => updatePantryQuantity(item.id, -1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">-</button>
+                          <button onClick={() => cambiaQuantita(item.id, -1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">-</button>
                           <span className="text-xs sm:text-sm font-bold text-slate-800 px-0.5 sm:px-1 truncate">{item.quantita} {item.unita}</span>
-                          <button onClick={() => updatePantryQuantity(item.id, 1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">+</button>
+                          <button onClick={() => cambiaQuantita(item.id, 1)} className="w-6 h-6 sm:w-7 sm:h-7 bg-white rounded-lg border border-slate-200 text-slate-600 font-bold hover:bg-slate-100 flex items-center justify-center text-sm shrink-0">+</button>
                         </div>
                       </div>
                     </div>
@@ -1568,7 +1588,7 @@ export default function App() {
 
       {/* ---------- MODALE: AGGIUNGI PRODOTTO IN DISPENSA ---------- */}
       {isAddPantryOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <ModalBackdrop>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-slate-100">
             <h3 className="text-lg font-bold text-slate-800 mb-4">{editingPantryId ? 'Modifica Prodotto' : 'Aggiungi Prodotto in Casa'}</h3>
             <form onSubmit={handleAddPantryItem} className="space-y-4">
@@ -1650,12 +1670,12 @@ export default function App() {
               </div>
             </form>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {/* ---------- MODALE: IMPORTA RICETTA DA LINK ---------- */}
       {isImportOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <ModalBackdrop>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-slate-100">
             <div className="flex items-center justify-between mb-1">
               <h3 className="text-lg font-bold text-slate-800">Importa ricetta da link</h3>
@@ -1738,12 +1758,95 @@ export default function App() {
               </div>
             )}
           </div>
-        </div>
+        </ModalBackdrop>
+      )}
+
+      {/* ---------- MODALE: COSA CUCINO? (suggerimento dalla dispensa) ---------- */}
+      {isSuggerisciOpen && (
+        <ModalBackdrop scrollable>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6 border border-slate-100 my-8">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-emerald-600" />
+                Cosa cucino?
+              </h3>
+              <button onClick={chiudiSuggerimenti} className="text-slate-400 hover:text-slate-700 text-xl leading-none px-1" aria-label="Chiudi">×</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-4">Una ricetta pensata per ciò che hai in dispensa, partendo da quello che scade prima.</p>
+
+            {suggerimento.stato === 'caricando' && (
+              <div className="text-center py-8">
+                <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+                <p className="text-sm text-slate-500">Sto guardando cosa hai in casa…</p>
+              </div>
+            )}
+
+            {suggerimento.stato === 'errore' && (
+              <div className="space-y-3">
+                <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl p-3" role="alert">{suggerimento.errore}</div>
+                <div className="flex gap-2">
+                  <button onClick={chiudiSuggerimenti} className="flex-1 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition">Chiudi</button>
+                  <button onClick={() => chiediSuggerimento(titoliSuggeriti)} className="flex-1 px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition">Riprova</button>
+                </div>
+              </div>
+            )}
+
+            {suggerimento.stato === 'pronto' && suggerimento.ricetta && (
+              <div className="space-y-4">
+                <div>
+                  <h4 className="text-base font-bold text-slate-800">{suggerimento.ricetta.titolo}</h4>
+                  {suggerimento.ricetta.motivo && (
+                    <p className="text-xs text-slate-500 italic mt-1">{suggerimento.ricetta.motivo}</p>
+                  )}
+                  <div className="flex flex-wrap gap-3 text-xs text-slate-500 mt-2">
+                    <span className="flex items-center gap-1"><Users className="w-3.5 h-3.5" />{suggerimento.ricetta.porzioniBase} porzioni</span>
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" />
+                      {suggerimento.ricetta.tempoPreparazioneMin + suggerimento.ricetta.tempoCotturaMin} min
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Ingredienti</p>
+                  <ul className="space-y-1">
+                    {suggerimento.ricetta.ingredienti.map((ing, i) => (
+                      <li key={i} className="flex items-center justify-between gap-2 text-sm">
+                        <span className="text-slate-700">{ing.nome}</span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="text-slate-400 text-xs">{ing.quantita} {ing.unita}</span>
+                          {!ing.inDispensa && (
+                            <span className="text-[10px] font-semibold bg-amber-100 text-amber-800 border border-amber-300 rounded-full px-2 py-0.5">da comprare</span>
+                          )}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div>
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-1.5">Preparazione</p>
+                  <p className="text-sm text-slate-700 whitespace-pre-line">{suggerimento.ricetta.preparazione}</p>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                  <button onClick={() => chiediSuggerimento(titoliSuggeriti)} className="flex-1 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4" />
+                    Proponi un'altra
+                  </button>
+                  <button onClick={salvaSuggerimentoComeRicetta} className="flex-1 px-4 py-2 text-sm font-medium bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition">
+                    Salva nel ricettario
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </ModalBackdrop>
       )}
 
       {/* ---------- MODALE: NUOVA RICETTA ---------- */}
       {isAddRecipeOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto">
+        <ModalBackdrop scrollable>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-6 border border-slate-100 my-8">
             <h3 className="text-lg font-bold text-slate-800 mb-4">{editingRecipeId ? 'Modifica Ricetta' : 'Nuova Ricetta'}</h3>
             <form onSubmit={handleAddRecipe} className="space-y-4">
@@ -1956,7 +2059,7 @@ export default function App() {
               </div>
             </form>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
 
       {/* ---------- MODALE: DETTAGLIO RICETTA COMPLETO ---------- */}
@@ -1965,10 +2068,7 @@ export default function App() {
         if (!recipe) return null;
         const g = giorniDaOggi(recipe.ultimaVoltaCucinata);
         return (
-          <div
-            className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto"
-            onClick={() => setSelectedRecipeId(null)}
-          >
+          <ModalBackdrop scrollable onClick={() => setSelectedRecipeId(null)}>
             <div
               className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8 border border-slate-100 overflow-hidden"
               onClick={(e) => e.stopPropagation()}
@@ -2053,13 +2153,13 @@ export default function App() {
                 </button>
               </div>
             </div>
-          </div>
+          </ModalBackdrop>
         );
       })()}
 
       {/* ---------- MODALE: CONFERMA ELIMINAZIONE ---------- */}
       {pendingDelete && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+        <ModalBackdrop zIndexClass="z-[60]">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-6 border border-slate-100">
             <div className="flex items-center gap-3 mb-2">
               <div className="w-10 h-10 rounded-full bg-red-50 flex items-center justify-center shrink-0">
@@ -2085,7 +2185,7 @@ export default function App() {
               </button>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </div>
   );
