@@ -2,8 +2,7 @@ import { useMemo } from 'react';
 import { usePersistentState } from './usePersistentState.js';
 import { STORAGE_KEYS } from '../utils/storage.js';
 import { giorniAllaData } from '../utils/date.js';
-
-const nuovoId = () => Date.now().toString() + Math.random().toString().slice(2, 6);
+import { nuovoId } from '../utils/id.js';
 
 // Dati e operazioni della dispensa. Non conosce l'interfaccia (modali, toast):
 // quella resta nel componente, che chiama queste funzioni.

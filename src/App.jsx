@@ -1,6 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { usePersistentState } from './hooks/usePersistentState.js';
+import ModalBackdrop from './components/ModalBackdrop.jsx';
+import RecipeDetailModal from './components/RecipeDetailModal.jsx';
 import { usePantry } from './hooks/usePantry.js';
+import { useShoppingList } from './hooks/useShoppingList.js';
+import { REPARTI_SUPERMERCATO, aggregaIngredientiDaPiano } from './utils/spesa.js';
+import { nuovoId } from './utils/id.js';
 import { STORAGE_KEYS } from './utils/storage.js';
 import { OGGI, dataDelGiorno, giorniAllaData, giorniDaOggi, formattaDataLocale } from './utils/date.js';
 import {
@@ -149,8 +154,6 @@ const INITIAL_MEAL_PLAN = [
 ];
 
 const GIORNI_SETTIMANA = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
-const REPARTI_SUPERMERCATO = ['Da assegnare', 'Ortofrutta', 'Freschi', 'Confezionati', 'Panetteria', 'Surgelati', 'Altro'];
-
 // Riga di lista che si può trascinare verso sinistra per rivelare un bottone
 // "elimina" rosso. Usata nella Lista Spesa al posto del bottone + conferma:
 // lo swipe stesso è già un gesto deliberato, quindi qui l'eliminazione è immediata.
@@ -225,19 +228,15 @@ function SwipeableRow({ id, label, isOpen, onOpenChange, onDelete, children }) {
   );
 }
 
-// Sfondo scuro sfocato comune a tutte le modali dell'app. Prima ogni modale
-// scriveva questo markup a mano, con piccole incoerenze (opacità 40 vs 50,
-// gestione scroll diversa) — ora c'è un solo punto da aggiornare per tutte.
-function ModalBackdrop({ children, scrollable = false, zIndexClass = 'z-50', onClick }) {
-  return (
-    <div
-      onClick={onClick}
-      className={`fixed inset-0 bg-slate-900/45 backdrop-blur-sm ${zIndexClass} flex items-center justify-center p-4 ${scrollable ? 'overflow-y-auto' : ''}`}
-    >
-      {children}
-    </div>
-  );
-}
+// Sezioni dell'app. `label` è per la barra in alto (schermi larghi), `labelCorta`
+// per la barra in basso (telefono), dove c'è poco spazio per riga.
+const SEZIONI = [
+  { id: 'pantry', label: 'Dispensa & Frigo', labelCorta: 'Dispensa', icon: Refrigerator },
+  { id: 'shopping', label: 'Lista Spesa', labelCorta: 'Spesa', icon: ShoppingBag },
+  { id: 'meals', label: 'Pianificatore Pasti', labelCorta: 'Pasti', icon: Calendar },
+  { id: 'recipes', label: 'Ricettario', labelCorta: 'Ricette', icon: Sparkles },
+  { id: 'stats', label: 'Statistiche', labelCorta: 'Statistiche', icon: TrendingUp }
+];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('meals'); // pantry, shopping, meals, recipes
@@ -255,7 +254,6 @@ export default function App() {
   // Questi dati vengono letti da localStorage all'avvio e salvati a ogni modifica.
   const [recipes, setRecipes] = usePersistentState(STORAGE_KEYS.recipes, INITIAL_RECIPES, segnalaSalvataggio);
   const [mealPlan, setMealPlan] = usePersistentState(STORAGE_KEYS.mealPlan, INITIAL_MEAL_PLAN, segnalaSalvataggio);
-  const [shoppingList, setShoppingList] = usePersistentState(STORAGE_KEYS.shoppingList, [], segnalaSalvataggio);
   // Storico di ciò che entra/esce dalla dispensa, usato dalla tab Statistiche.
   // Ogni voce: { id, nome, quantita, unita, tipo: 'acquisto'|'consumo'|'spreco', data }
   const [storico, setStorico] = usePersistentState(STORAGE_KEYS.storico, [], segnalaSalvataggio);
@@ -265,9 +263,21 @@ export default function App() {
     const oggiStr = formattaDataLocale(OGGI);
     setStorico((prev) => [
       ...prev,
-      ...arr.map((v) => ({ id: Date.now().toString() + Math.random().toString().slice(2, 6), data: oggiStr, ...v }))
+      ...arr.map((v) => ({ id: nuovoId(), data: oggiStr, ...v }))
     ]);
   };
+
+  // Lista della spesa: dati + operazioni (genera dal piano, aggiungi, spunta, reparto, rimuovi)
+  const {
+    shoppingList,
+    articoliSpuntati,
+    sostituisciArticoliDaPiano,
+    aggiungiArticoloManuale,
+    spuntaArticolo,
+    cambiaReparto,
+    rimuoviArticolo,
+    rimuoviSpuntati
+  } = useShoppingList({ segnalaSalvataggio });
 
   // Dispensa: dati + operazioni (aggiungi, modifica, quantità, rimuovi, scadenze)
   const {
@@ -342,14 +352,6 @@ export default function App() {
   };
 
   // Ricalcolo automatico quantità ingredienti in base alle porzioni scelte
-  const ingredientiScalati = (recipe, porzioniScelte) => {
-    const fattore = porzioniScelte / recipe.porzioniBase;
-    return recipe.ingredienti.map((ing) => ({
-      ...ing,
-      quantita: Math.round(ing.quantita * fattore * 100) / 100
-    }));
-  };
-
   // ---------- GESTIONE PIANO PASTI ----------
 
   const setMealForSlot = (indiceGiorno, pasto, recipeId) => {
@@ -475,52 +477,14 @@ export default function App() {
 
   // Genera la lista della spesa aggregando gli ingredienti di tutti i pasti pianificati
   const generaListaSpesaDaPiano = () => {
-    const aggregati = {}; // chiave: "nome|unita" -> quantitaTotale
-
-    mealPlan.forEach((entry) => {
-      const recipe = getRecipeById(entry.recipeId);
-      if (!recipe) return;
-      const ingredienti = ingredientiScalati(recipe, entry.porzioniScelte);
-      ingredienti.forEach((ing) => {
-        const chiave = `${ing.nome.toLowerCase()}|${ing.unita}`;
-        if (!aggregati[chiave]) {
-          aggregati[chiave] = { nome: ing.nome, unita: ing.unita, quantitaTotale: 0 };
-        }
-        aggregati[chiave].quantitaTotale += ing.quantita;
-      });
-    });
-
-    const nuoviArticoli = Object.values(aggregati).map((item) => ({
-      id: Date.now().toString() + Math.random().toString().slice(2, 6),
-      nome: item.nome,
-      quantitaTotale: Math.ceil(item.quantitaTotale),
-      unita: item.unita,
-      reparto: 'Da assegnare',
-      spuntato: false,
-      origine: 'piano'
-    }));
-
-    setShoppingList((prev) => {
-      // Rimuovi i vecchi articoli generati dal piano (non tocca quelli aggiunti manualmente) e rimetti i nuovi
-      const manuali = prev.filter((item) => item.origine === 'manuale');
-      return [...manuali, ...nuoviArticoli];
-    });
-
+    sostituisciArticoliDaPiano(aggregaIngredientiDaPiano(mealPlan, getRecipeById));
     showToast('Lista della spesa generata dal piano pasti!');
     setActiveTab('shopping');
   };
 
-  const toggleShoppingCheck = (id) => {
-    setShoppingList((prev) => prev.map((item) => (item.id === id ? { ...item, spuntato: !item.spuntato } : item)));
-  };
-
-  const updateShoppingItemReparto = (id, reparto) => {
-    setShoppingList((prev) => prev.map((item) => (item.id === id ? { ...item, reparto } : item)));
-  };
-
+  // Rimuove un articolo (chiamato dallo swipe) e chiude la riga aperta
   const removeShoppingItem = (id) => {
-    const item = shoppingList.find((i) => i.id === id);
-    setShoppingList((prev) => prev.filter((i) => i.id !== id));
+    const item = rimuoviArticolo(id);
     setSwipeOpenItemId(null);
     if (item) showToast(`"${item.nome}" rimosso dalla lista.`);
   };
@@ -543,53 +507,28 @@ export default function App() {
     setPendingDelete(null);
   };
 
-  // Prova a indovinare il reparto in base al nome del prodotto (euristica semplice, non AI).
-  // Non è fondamentale: se non trova nulla, resta "Da assegnare" e l'utente lo cambia a mano.
-  const REPARTO_KEYWORDS = {
-    Ortofrutta: ['mela', 'banana', 'pomodor', 'insalata', 'patata', 'cipolla', 'limone', 'arancia', 'zucchina', 'carota', 'frutta', 'verdura', 'aglio', 'peperon', 'melanzana', 'basilico', 'prezzemolo'],
-    Freschi: ['latte', 'uovo', 'uova', 'yogurt', 'formaggio', 'mozzarella', 'burro', 'prosciutto', 'salame', 'ricotta', 'panna', 'affettat'],
-    Panetteria: ['pane', 'panino', 'grissini', 'focaccia', 'brioche', 'cornetto'],
-    Surgelati: ['surgelat', 'gelato', 'piselli surgelati'],
-    Confezionati: ['pasta', 'riso', 'biscotti', 'caffè', 'zucchero', 'farina', 'olio', 'passata', 'scatoletta', 'conserva', 'the', 'tè', 'cioccolat', 'sale']
-  };
-  const indovinaReparto = (nomeProdotto) => {
-    const n = nomeProdotto.toLowerCase();
-    for (const [reparto, parole] of Object.entries(REPARTO_KEYWORDS)) {
-      if (parole.some((p) => n.includes(p))) return reparto;
-    }
-    return 'Da assegnare';
-  };
-
   const [nuovoArticoloSpesa, setNuovoArticoloSpesa] = useState('');
   const [nuovoArticoloQuantita, setNuovoArticoloQuantita] = useState(1);
   const [nuovoArticoloUnita, setNuovoArticoloUnita] = useState('pz');
   const addManualShoppingItem = () => {
-    if (!nuovoArticoloSpesa.trim()) return;
-    setShoppingList((prev) => [
-      ...prev,
-      {
-        id: Date.now().toString(),
-        nome: nuovoArticoloSpesa,
-        quantitaTotale: Number(nuovoArticoloQuantita) || 1,
-        unita: nuovoArticoloUnita,
-        reparto: indovinaReparto(nuovoArticoloSpesa),
-        spuntato: false,
-        origine: 'manuale'
-      }
-    ]);
+    const aggiunto = aggiungiArticoloManuale({
+      nome: nuovoArticoloSpesa,
+      quantita: nuovoArticoloQuantita,
+      unita: nuovoArticoloUnita
+    });
+    if (!aggiunto) return;
     setNuovoArticoloSpesa('');
     setNuovoArticoloQuantita(1);
     setNuovoArticoloUnita('pz');
   };
 
   const transferPurchasedToPantry = () => {
-    const acquistati = shoppingList.filter((item) => item.spuntato);
-    if (acquistati.length === 0) {
+    if (articoliSpuntati.length === 0) {
       showToast('Nessun articolo spuntato da trasferire!');
       return;
     }
     aggiungiProdotti(
-      acquistati.map((item) => ({
+      articoliSpuntati.map((item) => ({
         nome: item.nome,
         quantita: item.quantitaTotale,
         unita: item.unita,
@@ -597,8 +536,8 @@ export default function App() {
         dataScadenza: null
       }))
     );
-    setShoppingList((prev) => prev.filter((item) => !item.spuntato));
-    showToast(`${acquistati.length} prodotti trasferiti in dispensa!`);
+    rimuoviSpuntati();
+    showToast(`${articoliSpuntati.length} prodotti trasferiti in dispensa!`);
   };
 
   // ---------- DISPENSA ----------
@@ -982,15 +921,10 @@ export default function App() {
           </div>
         </div>
 
-        <div className="bg-emerald-800/80 backdrop-blur-md border-t border-emerald-600/40">
+        {/* Barra sezioni in alto: solo schermi larghi (su telefono c'è quella in basso) */}
+        <div className="hidden md:block bg-emerald-800/80 backdrop-blur-md border-t border-emerald-600/40">
           <div className="max-w-7xl mx-auto px-4 flex space-x-2 sm:space-x-6 overflow-x-auto scrollbar-none">
-            {[
-              { id: 'pantry', label: 'Dispensa & Frigo', icon: Refrigerator },
-              { id: 'shopping', label: 'Lista Spesa', icon: ShoppingBag },
-              { id: 'meals', label: 'Pianificatore Pasti', icon: Calendar },
-              { id: 'recipes', label: 'Ricettario', icon: Sparkles },
-              { id: 'stats', label: 'Statistiche', icon: TrendingUp }
-            ].map((tab) => (
+            {SEZIONI.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -1018,13 +952,13 @@ export default function App() {
       )}
 
       {toastMessage && (
-        <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-3 border border-slate-700">
+        <div className="fixed bottom-24 md:bottom-5 left-4 right-4 md:left-auto md:right-5 z-50 bg-slate-900 text-white px-4 py-3 rounded-xl shadow-2xl flex items-center space-x-3 border border-slate-700">
           <CheckCircle className="w-5 h-5 text-emerald-400" />
           <span className="text-sm font-medium">{toastMessage}</span>
         </div>
       )}
 
-      <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-28 md:pb-6">
         {/* ---------- TAB: DISPENSA ---------- */}
         {activeTab === 'pantry' && (
           <div className="space-y-6">
@@ -1219,7 +1153,7 @@ export default function App() {
                           onDelete={removeShoppingItem}
                         >
                           <div className={`p-4 flex items-center justify-between gap-3 hover:bg-slate-50 transition ${item.spuntato ? 'bg-slate-50/80' : ''}`}>
-                            <div onClick={() => toggleShoppingCheck(item.id)} className="flex items-center space-x-3 cursor-pointer flex-1 min-w-0">
+                            <div onClick={() => spuntaArticolo(item.id)} className="flex items-center space-x-3 cursor-pointer flex-1 min-w-0">
                               {item.spuntato ? <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" /> : <Circle className="w-5 h-5 text-slate-300 shrink-0" />}
                               <div className="min-w-0">
                                 <p className={`text-sm font-semibold truncate ${item.spuntato ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.nome}</p>
@@ -1228,7 +1162,7 @@ export default function App() {
                             </div>
                             <select
                               value={item.reparto || 'Da assegnare'}
-                              onChange={(e) => updateShoppingItemReparto(item.id, e.target.value)}
+                              onChange={(e) => cambiaReparto(item.id, e.target.value)}
                               onClick={(e) => e.stopPropagation()}
                               className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-emerald-500 shrink-0"
                             >
@@ -1585,6 +1519,34 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Barra sezioni in basso: solo telefono. Tasti grandi, raggiungibili col pollice. */}
+      <nav
+        aria-label="Sezioni"
+        className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-emerald-900 border-t border-emerald-700 shadow-[0_-4px_12px_rgba(0,0,0,0.18)]"
+        style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+      >
+        <div className="flex">
+          {SEZIONI.map((tab) => {
+            const attiva = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                aria-current={attiva ? 'page' : undefined}
+                className={`flex-1 flex flex-col items-center justify-center gap-1 min-h-[60px] pt-2 pb-1.5 text-[11px] font-medium border-t-2 transition-colors ${
+                  attiva
+                    ? 'border-emerald-300 text-white bg-emerald-800'
+                    : 'border-transparent text-emerald-200 active:bg-emerald-800'
+                }`}
+              >
+                <tab.icon className="w-6 h-6" />
+                <span>{tab.labelCorta}</span>
+              </button>
+            );
+          })}
+        </div>
+      </nav>
 
       {/* ---------- MODALE: AGGIUNGI PRODOTTO IN DISPENSA ---------- */}
       {isAddPantryOpen && (
@@ -2063,99 +2025,14 @@ export default function App() {
       )}
 
       {/* ---------- MODALE: DETTAGLIO RICETTA COMPLETO ---------- */}
-      {selectedRecipeId && (() => {
-        const recipe = getRecipeById(selectedRecipeId);
-        if (!recipe) return null;
-        const g = giorniDaOggi(recipe.ultimaVoltaCucinata);
-        return (
-          <ModalBackdrop scrollable onClick={() => setSelectedRecipeId(null)}>
-            <div
-              className="bg-white rounded-2xl shadow-xl w-full max-w-2xl my-8 border border-slate-100 overflow-hidden"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div className="bg-gradient-to-r from-emerald-600 to-teal-700 text-white p-6">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <h2 className="text-2xl font-black">{recipe.titolo}</h2>
-                    <p className="text-xs text-emerald-100 mt-1">
-                      {recipe.ultimaVoltaCucinata
-                        ? g === 0 ? 'Cucinata oggi' : g === 1 ? 'Cucinata ieri' : `Cucinata ${g} giorni fa`
-                        : 'Mai cucinata'}
-                    </p>
-                  </div>
-                  <button onClick={() => setSelectedRecipeId(null)} className="text-white/70 hover:text-white text-2xl leading-none px-1">×</button>
-                </div>
-                <div className="flex flex-wrap items-center gap-3 mt-4 text-xs">
-                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{recipe.tempoPreparazioneMin}min prep. + {recipe.tempoCotturaMin}min cottura</span>
-                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Users className="w-3.5 h-3.5" />{recipe.porzioniBase} porzioni base</span>
-                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Star className="w-3.5 h-3.5" />{recipe.bonta}/5</span>
-                  <span className="bg-white/15 px-3 py-1.5 rounded-lg flex items-center gap-1"><Euro className="w-3.5 h-3.5" />{recipe.prezzo}/5</span>
-                </div>
-              </div>
-
-              <div className="p-6 space-y-5">
-                {(recipe.categoria.length > 0 || recipe.tagDieta.length > 0) && (
-                  <div className="flex flex-wrap gap-1.5">
-                    {recipe.categoria.map((c) => (
-                      <span key={c} className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs px-2 py-1 rounded-lg capitalize font-medium">{c}</span>
-                    ))}
-                    {recipe.tagDieta.map((t) => (
-                      <span key={t} className="bg-amber-50 text-amber-700 border border-amber-200 text-xs px-2 py-1 rounded-lg capitalize font-medium">{t}</span>
-                    ))}
-                  </div>
-                )}
-
-                <div>
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                    Ingredienti (per {recipe.porzioniBase} persone)
-                  </h4>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {recipe.ingredienti.map((ing) => (
-                      <span key={ing.id} className="bg-slate-50 border border-slate-100 text-slate-700 text-xs px-2 py-1.5 rounded-lg">
-                        {ing.nome} · {ing.quantita}{ing.unita}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Preparazione</h4>
-                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{recipe.preparazione}</p>
-                </div>
-
-                {recipe.notePersonali && (
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Note personali</h4>
-                    <p className="text-sm text-slate-600 italic">{recipe.notePersonali}</p>
-                  </div>
-                )}
-
-                {recipe.fonte && (
-                  <div>
-                    <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Fonte</h4>
-                    <p className="text-sm text-emerald-700 break-all">{recipe.fonte}</p>
-                  </div>
-                )}
-              </div>
-
-              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
-                <button
-                  onClick={() => { apriModificaRicetta(recipe); setSelectedRecipeId(null); }}
-                  className="px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 rounded-xl transition flex items-center gap-1.5"
-                >
-                  <Edit2 className="w-3.5 h-3.5" /> Modifica
-                </button>
-                <button
-                  onClick={() => setSelectedRecipeId(null)}
-                  className="px-4 py-2 text-xs font-semibold bg-slate-800 hover:bg-slate-900 text-white rounded-xl transition"
-                >
-                  Chiudi
-                </button>
-              </div>
-            </div>
-          </ModalBackdrop>
-        );
-      })()}
+      {selectedRecipeId && getRecipeById(selectedRecipeId) && (
+        <RecipeDetailModal
+          key={selectedRecipeId}
+          recipe={getRecipeById(selectedRecipeId)}
+          onClose={() => setSelectedRecipeId(null)}
+          onEdit={(recipe) => { apriModificaRicetta(recipe); setSelectedRecipeId(null); }}
+        />
+      )}
 
       {/* ---------- MODALE: CONFERMA ELIMINAZIONE ---------- */}
       {pendingDelete && (
