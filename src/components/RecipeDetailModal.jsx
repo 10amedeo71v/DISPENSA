@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Clock, Users, Star, Euro, Edit2, Minus, Plus } from 'lucide-react';
+import { Clock, Users, Star, Euro, Edit2, Trash2, Minus, Plus } from 'lucide-react';
 import ModalBackdrop from './ModalBackdrop.jsx';
 import { giorniDaOggi } from '../utils/date.js';
 import { scalaIngredienti } from '../utils/spesa.js';
@@ -11,7 +11,7 @@ const PORZIONI_MAX = 99;
 // le quantità vengono ricalcolate (semplice proporzione) solo per la visualizzazione,
 // la ricetta salvata non viene modificata. Il componente esiste solo mentre la finestra
 // è aperta, quindi a ogni apertura si riparte dalle porzioni della ricetta.
-export default function RecipeDetailModal({ recipe, onClose, onEdit }) {
+export default function RecipeDetailModal({ recipe, onClose, onEdit, onDelete }) {
   const base = recipe.porzioniBase > 0 ? recipe.porzioniBase : 1;
   const [porzioni, setPorzioni] = useState(base);
 
@@ -119,7 +119,13 @@ export default function RecipeDetailModal({ recipe, onClose, onEdit }) {
           )}
         </div>
 
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-2">
+        <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex items-center gap-2">
+          <button
+            onClick={() => onDelete(recipe)}
+            className="mr-auto px-3 py-2.5 text-xs font-semibold text-red-600 hover:bg-red-50 active:bg-red-50 rounded-xl transition flex items-center gap-1.5"
+          >
+            <Trash2 className="w-3.5 h-3.5" /> Elimina
+          </button>
           <button
             onClick={() => onEdit(recipe)}
             className="px-4 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 rounded-xl transition flex items-center gap-1.5"

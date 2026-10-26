@@ -4,6 +4,9 @@ import ModalBackdrop from './components/ModalBackdrop.jsx';
 import RecipeDetailModal from './components/RecipeDetailModal.jsx';
 import { usePantry } from './hooks/usePantry.js';
 import { useShoppingList } from './hooks/useShoppingList.js';
+import { useRecipes } from './hooks/useRecipes.js';
+import { useMealPlan } from './hooks/useMealPlan.js';
+import { scegliPastiAutomatici } from './utils/pianoPasti.js';
 import { REPARTI_SUPERMERCATO, aggregaIngredientiDaPiano } from './utils/spesa.js';
 import { nuovoId } from './utils/id.js';
 import { STORAGE_KEYS } from './utils/storage.js';
@@ -252,8 +255,6 @@ export default function App() {
   };
 
   // Questi dati vengono letti da localStorage all'avvio e salvati a ogni modifica.
-  const [recipes, setRecipes] = usePersistentState(STORAGE_KEYS.recipes, INITIAL_RECIPES, segnalaSalvataggio);
-  const [mealPlan, setMealPlan] = usePersistentState(STORAGE_KEYS.mealPlan, INITIAL_MEAL_PLAN, segnalaSalvataggio);
   // Storico di ciò che entra/esce dalla dispensa, usato dalla tab Statistiche.
   // Ogni voce: { id, nome, quantita, unita, tipo: 'acquisto'|'consumo'|'spreco', data }
   const [storico, setStorico] = usePersistentState(STORAGE_KEYS.storico, [], segnalaSalvataggio);
@@ -266,6 +267,25 @@ export default function App() {
       ...arr.map((v) => ({ id: nuovoId(), data: oggiStr, ...v }))
     ]);
   };
+
+  // Ricettario: dati + operazioni (aggiungi, modifica, rimuovi, segna come cucinata)
+  const { recipes, getRecipeById, aggiungiRicetta, modificaRicetta, rimuoviRicetta, segnaCucinata } = useRecipes({
+    valoreIniziale: INITIAL_RECIPES,
+    segnalaSalvataggio
+  });
+
+  // Piano pasti: dati + operazioni (imposta pasto, porzioni, rimuovi, svuota giorno)
+  const {
+    mealPlan,
+    trovaPasto,
+    giornoHaPasti,
+    contaPastiConRicetta,
+    impostaPasto,
+    cambiaPorzioni,
+    rimuoviPasto,
+    svuotaGiorno,
+    rimuoviPastiConRicetta
+  } = useMealPlan({ valoreIniziale: INITIAL_MEAL_PLAN, segnalaSalvataggio });
 
   // Lista della spesa: dati + operazioni (genera dal piano, aggiungi, spunta, reparto, rimuovi)
   const {
@@ -341,8 +361,6 @@ export default function App() {
 
   // ---------- HELPERS ----------
 
-  const getRecipeById = (id) => recipes.find((r) => r.id === id);
-
   const getExpiryStatus = (dateString) => {
     if (!dateString) return { label: 'N/D', color: 'bg-gray-100 text-gray-700 border-gray-200' };
     const diffDays = giorniAllaData(dateString);
@@ -354,39 +372,14 @@ export default function App() {
   // Ricalcolo automatico quantità ingredienti in base alle porzioni scelte
   // ---------- GESTIONE PIANO PASTI ----------
 
+  // Sceglie la ricetta di uno slot (o lo svuota se `recipeId` è vuoto)
   const setMealForSlot = (indiceGiorno, pasto, recipeId) => {
     const data = dataDelGiorno(indiceGiorno);
-    setMealPlan((prev) => {
-      const esiste = prev.find((m) => m.data === data && m.pasto === pasto);
-      if (esiste) {
-        return prev.map((m) =>
-          m.data === data && m.pasto === pasto ? { ...m, recipeId, porzioniScelte: m.porzioniScelte } : m
-        );
-      }
-      return [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          data,
-          pasto,
-          recipeId,
-          porzioniScelte: 1
-        }
-      ];
-    });
+    impostaPasto(data, pasto, recipeId);
 
     // Aggiorniamo "ultimaVoltaCucinata" sulla ricetta, solo se la data pianificata
     // non è nel futuro (se stai pianificando per tra 3 giorni, non l'hai ancora cucinata!)
-    // e solo se è più recente di quella già salvata.
-    if (recipeId && giorniDaOggi(data) >= 0) {
-      setRecipes((prev) =>
-        prev.map((r) => {
-          if (r.id !== recipeId) return r;
-          const eraGiaPiuRecente = r.ultimaVoltaCucinata && r.ultimaVoltaCucinata > data;
-          return eraGiaPiuRecente ? r : { ...r, ultimaVoltaCucinata: data };
-        })
-      );
-    }
+    if (recipeId && giorniDaOggi(data) >= 0) segnaCucinata(recipeId, data);
   };
 
   // ---------- GENERAZIONE AUTOMATICA DEL PIANO ----------
@@ -396,29 +389,6 @@ export default function App() {
 
   const toggleGiornoAuto = (indiceGiorno) => {
     setGiorniSelezionatiAuto((prev) => prev.map((v, i) => (i === indiceGiorno ? !v : v)));
-  };
-
-  // Più tempo è passato dall'ultima volta che una ricetta è stata cucinata, più "peso" ha
-  // nella scelta casuale (quindi più probabile) — le ricette recenti non sono escluse, solo
-  // meno probabili. Le ricette mai cucinate hanno il peso massimo.
-  const pesoRicetta = (recipe) => {
-    const g = giorniDaOggi(recipe.ultimaVoltaCucinata);
-    if (g === null) return 10;
-    return Math.min(10, Math.max(1, g));
-  };
-
-  const sceglieRicettaPesata = (pool, esclusiInQuestoGiro) => {
-    let candidati = pool.filter((r) => !esclusiInQuestoGiro.has(r.id));
-    if (candidati.length === 0) candidati = pool;
-    if (candidati.length === 0) return null;
-    const pesi = candidati.map(pesoRicetta);
-    const totale = pesi.reduce((a, b) => a + b, 0);
-    let r = Math.random() * totale;
-    for (let i = 0; i < candidati.length; i++) {
-      r -= pesi[i];
-      if (r <= 0) return candidati[i];
-    }
-    return candidati[candidati.length - 1];
   };
 
   const generaPianoAutomatico = () => {
@@ -435,44 +405,19 @@ export default function App() {
       return;
     }
 
-    const usateInQuestoGiro = new Set();
-    let generati = 0;
-
-    indiciSelezionati.forEach((indiceGiorno) => {
-      const data = dataDelGiorno(indiceGiorno);
-      ['pranzo', 'cena'].forEach((pasto) => {
-        // Non sovrascriviamo pasti già pianificati a mano
-        const esiste = mealPlan.find((m) => m.data === data && m.pasto === pasto);
-        if (esiste) return;
-
-        // Preferiamo ricette adatte a quel pasto, se la ricetta ha una categoria impostata
-        let pool = recipes.filter((r) => r.categoria.length === 0 || r.categoria.includes(pasto));
-        if (pool.length === 0) pool = recipes;
-
-        const scelta = sceglieRicettaPesata(pool, usateInQuestoGiro);
-        if (!scelta) return;
-
-        usateInQuestoGiro.add(scelta.id);
-        setMealForSlot(indiceGiorno, pasto, scelta.id);
-        generati++;
-      });
+    const assegnazioni = scegliPastiAutomatici({
+      indiciGiorni: indiciSelezionati,
+      piano: mealPlan,
+      recipes,
+      dataDelGiorno
     });
+    assegnazioni.forEach((a) => setMealForSlot(a.indiceGiorno, a.pasto, a.recipeId));
 
-    if (generati === 0) {
+    if (assegnazioni.length === 0) {
       showToast('I giorni selezionati erano già completamente pianificati.');
     } else {
-      showToast(`Generati ${generati} pasti per i giorni selezionati!`);
+      showToast(`Generati ${assegnazioni.length} pasti per i giorni selezionati!`);
     }
-  };
-
-  const updatePorzioni = (entryId, delta) => {
-    setMealPlan((prev) =>
-      prev.map((m) => (m.id === entryId ? { ...m, porzioniScelte: Math.max(1, m.porzioniScelte + delta) } : m))
-    );
-  };
-
-  const removeMeal = (entryId) => {
-    setMealPlan((prev) => prev.filter((m) => m.id !== entryId));
   };
 
   // Genera la lista della spesa aggregando gli ingredienti di tutti i pasti pianificati
@@ -490,6 +435,12 @@ export default function App() {
   };
 
   // Esegue davvero l'eliminazione dopo che l'utente ha confermato nella modale
+  // Quante volte la ricetta che sto per eliminare è nel piano pasti (per avvisare l'utente)
+  const pastiPianificatiConRicetta =
+    pendingDelete && pendingDelete.tipo === 'recipe'
+      ? contaPastiConRicetta(pendingDelete.id)
+      : 0;
+
   const confermaEliminazione = () => {
     if (!pendingDelete) return;
     const { tipo, id, nome } = pendingDelete;
@@ -497,11 +448,14 @@ export default function App() {
       rimuoviProdotto(id);
       showToast(`"${nome}" eliminato dalla dispensa.`);
     } else if (tipo === 'recipe') {
-      setRecipes((prev) => prev.filter((r) => r.id !== id));
+      rimuoviRicetta(id);
+      // I pasti pianificati con questa ricetta non avrebbero più senso: li svuotiamo.
+      rimuoviPastiConRicetta(id);
+      if (selectedRecipeId === id) setSelectedRecipeId(null);
       showToast(`Ricetta "${nome}" eliminata.`);
     } else if (tipo === 'giorno') {
       // id qui è la data (es. '2026-09-24'): svuota sia pranzo che cena di quel giorno
-      setMealPlan((prev) => prev.filter((m) => m.data !== id));
+      svuotaGiorno(id);
       showToast(`Pranzo e cena di ${nome} svuotati.`);
     }
     setPendingDelete(null);
@@ -662,61 +616,14 @@ export default function App() {
     e.preventDefault();
     if (!newRecipe.titolo.trim()) return;
 
-    const ingredientiPuliti = newRecipe.ingredienti
-      .filter((ing) => ing.nome.trim())
-      .map((ing) => ({ ...ing, quantita: Number(ing.quantita) || 0 }));
-
-    const tagDietaArray = newRecipe.tagDieta
-      ? newRecipe.tagDieta.split(',').map((t) => t.trim()).filter(Boolean)
-      : [];
-
     if (editingRecipeId) {
       // Sto modificando una ricetta esistente
-      setRecipes((prev) =>
-        prev.map((r) =>
-          r.id === editingRecipeId
-            ? {
-                ...r,
-                titolo: newRecipe.titolo,
-                ingredienti: ingredientiPuliti,
-                preparazione: newRecipe.preparazione,
-                porzioniBase: Number(newRecipe.porzioniBase) || 1,
-                tempoPreparazioneMin: Number(newRecipe.tempoPreparazioneMin) || 0,
-                tempoCotturaMin: Number(newRecipe.tempoCotturaMin) || 0,
-                bonta: Number(newRecipe.bonta) || 0,
-                prezzo: Number(newRecipe.prezzo) || 0,
-                notePersonali: newRecipe.notePersonali,
-                fonte: newRecipe.fonte,
-                categoria: newRecipe.categoria,
-                tagDieta: tagDietaArray,
-                updatedAt: new Date().toISOString()
-              }
-            : r
-        )
-      );
-      showToast(`Ricetta "${newRecipe.titolo}" aggiornata!`);
+      const salvata = modificaRicetta(editingRecipeId, newRecipe);
+      showToast(`Ricetta "${salvata.titolo}" aggiornata!`);
     } else {
       // Sto aggiungendo una ricetta nuova
-      const ricettaFinale = {
-        id: Date.now().toString(),
-        titolo: newRecipe.titolo,
-        ingredienti: ingredientiPuliti,
-        preparazione: newRecipe.preparazione,
-        porzioniBase: Number(newRecipe.porzioniBase) || 1,
-        tempoPreparazioneMin: Number(newRecipe.tempoPreparazioneMin) || 0,
-        tempoCotturaMin: Number(newRecipe.tempoCotturaMin) || 0,
-        bonta: Number(newRecipe.bonta) || 0,
-        prezzo: Number(newRecipe.prezzo) || 0,
-        notePersonali: newRecipe.notePersonali,
-        fonte: newRecipe.fonte,
-        categoria: newRecipe.categoria,
-        tagDieta: tagDietaArray,
-        ultimaVoltaCucinata: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      setRecipes((prev) => [...prev, ricettaFinale]);
-      showToast(`Ricetta "${ricettaFinale.titolo}" salvata!`);
+      const creata = aggiungiRicetta(newRecipe);
+      showToast(`Ricetta "${creata.titolo}" salvata!`);
     }
 
     setNewRecipe(RICETTA_VUOTA);
@@ -743,11 +650,6 @@ export default function App() {
     });
     setEditingRecipeId(recipe.id);
     setIsAddRecipeOpen(true);
-  };
-
-  const deleteRecipe = (id) => {
-    setRecipes((prev) => prev.filter((r) => r.id !== id));
-    showToast('Ricetta eliminata.');
   };
 
   // ---------- IMPORTAZIONE RICETTA DA LINK ----------
@@ -1231,19 +1133,20 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
               {GIORNI_SETTIMANA.map((day, indiceGiorno) => {
                 const data = dataDelGiorno(indiceGiorno);
-                const giornoHaPasti = mealPlan.some((m) => m.data === data);
+                const haPasti = giornoHaPasti(data);
                 return (
                   <div key={day} className="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm">
                     <div className="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
                       <span className="font-black text-sm text-emerald-700 tracking-wide uppercase">{day}</span>
                       <div className="flex items-center gap-2">
-                        {giornoHaPasti && (
+                        {haPasti && (
                           <button
                             onClick={() => setPendingDelete({ tipo: 'giorno', id: data, nome: day })}
-                            className="text-slate-300 hover:text-red-500 transition"
+                            className="w-10 h-10 -my-2 -mr-1 flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 active:bg-red-50 rounded-xl transition"
                             title={`Svuota ${day}`}
+                            aria-label={`Svuota ${day}`}
                           >
-                            <Trash2 className="w-3.5 h-3.5" />
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                         <Calendar className="w-4 h-4 text-slate-400" />
@@ -1251,7 +1154,7 @@ export default function App() {
                     </div>
 
                     {['pranzo', 'cena'].map((pasto) => {
-                      const entry = mealPlan.find((m) => m.data === data && m.pasto === pasto);
+                      const entry = trovaPasto(data, pasto);
                       const recipe = entry ? getRecipeById(entry.recipeId) : null;
                       return (
                         <div key={pasto} className="mb-3 bg-slate-50 p-3 rounded-xl border border-slate-100 last:mb-0">
@@ -1263,7 +1166,7 @@ export default function App() {
                           <select
                             value={entry ? entry.recipeId : ''}
                             onChange={(e) => setMealForSlot(indiceGiorno, pasto, e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            className="w-full bg-white border border-slate-200 rounded-lg px-2 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                           >
                             <option value="">Scegli una ricetta...</option>
                             {recipes.map((r) => {
@@ -1279,14 +1182,28 @@ export default function App() {
 
                           {entry && recipe && (
                             <div className="flex items-center justify-between mt-2">
-                              <div className="flex items-center gap-1 text-xs text-slate-500">
-                                <Users className="w-3.5 h-3.5" />
-                                <button onClick={() => updatePorzioni(entry.id, -1)} className="w-5 h-5 bg-white rounded border border-slate-200 flex items-center justify-center">-</button>
-                                <span className="font-semibold text-slate-700">{entry.porzioniScelte}</span>
-                                <button onClick={() => updatePorzioni(entry.id, 1)} className="w-5 h-5 bg-white rounded border border-slate-200 flex items-center justify-center">+</button>
+                              <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                                <Users className="w-4 h-4" />
+                                <button
+                                  onClick={() => cambiaPorzioni(entry.id, -1)}
+                                  disabled={entry.porzioniScelte <= 1}
+                                  className="w-10 h-10 bg-white rounded-xl border border-slate-200 text-lg font-semibold text-slate-600 flex items-center justify-center active:bg-slate-100 disabled:opacity-40"
+                                  aria-label="Meno porzioni"
+                                >-</button>
+                                <span className="font-semibold text-slate-700 text-sm min-w-[1.25rem] text-center">{entry.porzioniScelte}</span>
+                                <button
+                                  onClick={() => cambiaPorzioni(entry.id, 1)}
+                                  className="w-10 h-10 bg-white rounded-xl border border-slate-200 text-lg font-semibold text-slate-600 flex items-center justify-center active:bg-slate-100"
+                                  aria-label="Più porzioni"
+                                >+</button>
                               </div>
-                              <button onClick={() => removeMeal(entry.id)} className="text-slate-300 hover:text-red-500">
-                                <Trash2 className="w-3.5 h-3.5" />
+                              <button
+                                onClick={() => rimuoviPasto(entry.id)}
+                                className="w-10 h-10 flex items-center justify-center text-slate-400 hover:text-red-500 hover:bg-red-50 active:bg-red-50 rounded-xl transition"
+                                title="Rimuovi pasto"
+                                aria-label={`Rimuovi ${pasto}`}
+                              >
+                                <Trash2 className="w-5 h-5" />
                               </button>
                             </div>
                           )}
@@ -1410,12 +1327,12 @@ export default function App() {
                         Apri ricetta completa <ChevronDown className="w-3 h-3 -rotate-90" />
                       </p>
                     </div>
-                    <div className="px-5 py-3 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                      <button onClick={() => apriModificaRicetta(recipe)} className="p-1.5 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100 rounded-lg transition" title="Modifica ricetta">
-                        <Edit2 className="w-4 h-4" />
+                    <div className="px-3 py-1.5 bg-slate-50 border-t border-slate-100 flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      <button onClick={() => apriModificaRicetta(recipe)} className="w-11 h-11 flex items-center justify-center text-slate-500 hover:text-emerald-600 hover:bg-emerald-100 active:bg-emerald-100 rounded-xl transition" title="Modifica ricetta" aria-label={`Modifica ${recipe.titolo}`}>
+                        <Edit2 className="w-5 h-5" />
                       </button>
-                      <button onClick={() => setPendingDelete({ tipo: 'recipe', id: recipe.id, nome: recipe.titolo })} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-100 rounded-lg transition" title="Elimina ricetta">
-                        <Trash2 className="w-4 h-4" />
+                      <button onClick={() => setPendingDelete({ tipo: 'recipe', id: recipe.id, nome: recipe.titolo })} className="w-11 h-11 flex items-center justify-center text-slate-500 hover:text-red-600 hover:bg-red-100 active:bg-red-100 rounded-xl transition" title="Elimina ricetta" aria-label={`Elimina ${recipe.titolo}`}>
+                        <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
                   </div>
@@ -2031,6 +1948,7 @@ export default function App() {
           recipe={getRecipeById(selectedRecipeId)}
           onClose={() => setSelectedRecipeId(null)}
           onEdit={(recipe) => { apriModificaRicetta(recipe); setSelectedRecipeId(null); }}
+          onDelete={(recipe) => setPendingDelete({ tipo: 'recipe', id: recipe.id, nome: recipe.titolo })}
         />
       )}
 
@@ -2047,6 +1965,11 @@ export default function App() {
             <p className="text-sm text-slate-500 mb-5">
               Stai per eliminare <span className="font-semibold text-slate-700">"{pendingDelete.nome}"</span>. Questa azione non può essere annullata.
             </p>
+            {pendingDelete.tipo === 'recipe' && pastiPianificatiConRicetta > 0 && (
+              <p className="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-3 py-2 mb-5">
+                Questa ricetta è nel piano pasti ({pastiPianificatiConRicetta} {pastiPianificatiConRicetta === 1 ? 'pasto' : 'pasti'}): {pastiPianificatiConRicetta === 1 ? 'verrà svuotato' : 'verranno svuotati'} anche {pastiPianificatiConRicetta === 1 ? 'quello' : 'quelli'}.
+              </p>
+            )}
             <div className="flex items-center justify-end gap-2">
               <button
                 onClick={() => setPendingDelete(null)}
