@@ -5,8 +5,8 @@ import { normalizzaCampiRicetta } from '../utils/ricette.js';
 
 // Dati e operazioni del ricettario. Non conosce l'interfaccia (form, modali, toast):
 // quella resta nel componente, che chiama queste funzioni.
-export function useRecipes({ valoreIniziale, segnalaSalvataggio }) {
-  const [recipes, setRecipes] = usePersistentState(STORAGE_KEYS.recipes, valoreIniziale, segnalaSalvataggio);
+export function useRecipes({ segnalaSalvataggio }) {
+  const [recipes, setRecipes] = usePersistentState(STORAGE_KEYS.recipes, [], segnalaSalvataggio);
 
   const getRecipeById = (id) => recipes.find((r) => r.id === id);
 

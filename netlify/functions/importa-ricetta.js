@@ -7,6 +7,8 @@
 
 const LIMITE_VIDEO_BYTES = 15 * 1024 * 1024; // 15 MB — oltre rinunciamo al video per stare nei limiti
 
+import { chiediJsonAGemini } from './lib/gemini.js';
+
 export default async (req) => {
   if (req.method !== 'POST') {
     return risposta({ errore: 'Metodo non permesso' }, 405);
@@ -164,29 +166,5 @@ async function chiediRicettaAGemini({ testo, videoBase64, videoMimeType, apiKey 
     throw new Error('Nessun contenuto da analizzare.');
   }
 
-  const modello = 'gemini-3.6-flash';
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modello}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts }],
-        generationConfig: { response_mime_type: 'application/json' }
-      })
-    }
-  );
-
-  if (!res.ok) {
-    const testoErrore = await res.text();
-    throw new Error(`Gemini ha risposto con un errore: ${testoErrore.slice(0, 200)}`);
-  }
-
-  const dati = await res.json();
-  const testoJson = dati?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!testoJson) {
-    throw new Error('Gemini non ha restituito nulla di utilizzabile (magari ha bloccato il contenuto).');
-  }
-
-  return JSON.parse(testoJson);
+  return chiediJsonAGemini({ apiKey, parts });
 }

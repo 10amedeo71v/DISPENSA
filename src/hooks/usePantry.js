@@ -6,11 +6,10 @@ import { nuovoId } from '../utils/id.js';
 
 // Dati e operazioni della dispensa. Non conosce l'interfaccia (modali, toast):
 // quella resta nel componente, che chiama queste funzioni.
-//  - valoreIniziale: contenuto della dispensa al primo avvio
 //  - segnalaSalvataggio: chiamata dopo ogni salvataggio su localStorage
 //  - registraStorico: per annotare acquisti, consumi e sprechi nelle statistiche
-export function usePantry({ valoreIniziale, segnalaSalvataggio, registraStorico }) {
-  const [pantry, setPantry] = usePersistentState(STORAGE_KEYS.pantry, valoreIniziale, segnalaSalvataggio);
+export function usePantry({ segnalaSalvataggio, registraStorico }) {
+  const [pantry, setPantry] = usePersistentState(STORAGE_KEYS.pantry, [], segnalaSalvataggio);
 
   // Aggiunge uno o più prodotti nuovi e li registra come "acquisto".
   // Ogni prodotto: { nome, quantita, unita, posizione, dataScadenza }

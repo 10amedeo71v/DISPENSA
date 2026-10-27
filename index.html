@@ -5,6 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Dispensa Casa</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      /* Su iPhone, Safari ingrandisce da solo la pagina quando si tocca un campo con testo
+         più piccolo di 16px. Su telefono teniamo i campi a 16px per evitarlo. */
+      @media (max-width: 767px) {
+        input:not([type='checkbox']):not([type='radio']),
+        select,
+        textarea {
+          font-size: 16px !important;
+        }
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>

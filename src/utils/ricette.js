@@ -48,3 +48,90 @@ export function sceglieRicettaPesata(pool, esclusiInQuestoGiro, random = Math.ra
   }
   return candidati[candidati.length - 1];
 }
+
+// Trasforma la ricetta proposta dall'AI ("Cosa cucino?") nei campi del form Nuova ricetta,
+// da controllare e salvare. Gli ingredienti segnalati "da comprare" finiscono nelle note.
+export function bozzaDaSuggerimento(r) {
+  const daComprare = r.ingredienti.filter((ing) => !ing.inDispensa).map((ing) => ing.nome);
+  return {
+    titolo: r.titolo,
+    ingredienti: r.ingredienti.map((ing, i) => ({ id: 'sug' + i, nome: ing.nome, quantita: ing.quantita, unita: ing.unita })),
+    preparazione: r.preparazione,
+    porzioniBase: r.porzioniBase,
+    tempoPreparazioneMin: r.tempoPreparazioneMin,
+    tempoCotturaMin: r.tempoCotturaMin,
+    bonta: 3,
+    prezzo: 1,
+    notePersonali: daComprare.length > 0 ? `Da comprare: ${daComprare.join(', ')}` : '',
+    fonte: "Suggerita dall'AI",
+    categoria: r.categoria,
+    tagDieta: r.tagDieta.join(', ')
+  };
+}
+
+// Campi di una ricetta "vuota", per il form Nuova ricetta. È una funzione (non una costante)
+// così ogni apertura del form parte da un oggetto nuovo.
+export function ricettaVuota() {
+  return {
+    titolo: '',
+    ingredienti: [{ id: 'tmp1', nome: '', quantita: 1, unita: 'pz' }],
+    preparazione: '',
+    porzioniBase: 4,
+    tempoPreparazioneMin: 10,
+    tempoCotturaMin: 10,
+    bonta: 3,
+    prezzo: 1,
+    notePersonali: '',
+    fonte: '',
+    categoria: [],
+    tagDieta: ''
+  };
+}
+
+// Dai dati di una ricetta salvata ai campi del form "Modifica ricetta"
+export function formDaRicetta(recipe) {
+  return {
+    titolo: recipe.titolo,
+    ingredienti: recipe.ingredienti.length
+      ? recipe.ingredienti.map((ing) => ({ ...ing }))
+      : [{ id: 'tmp1', nome: '', quantita: 1, unita: 'pz' }],
+    preparazione: recipe.preparazione,
+    porzioniBase: recipe.porzioniBase,
+    tempoPreparazioneMin: recipe.tempoPreparazioneMin,
+    tempoCotturaMin: recipe.tempoCotturaMin,
+    bonta: recipe.bonta,
+    prezzo: recipe.prezzo,
+    notePersonali: recipe.notePersonali,
+    fonte: recipe.fonte,
+    categoria: recipe.categoria,
+    tagDieta: (recipe.tagDieta || []).join(', ')
+  };
+}
+
+// Dalla ricetta estratta dall'AI (importazione da link) ai campi del form, da controllare e salvare.
+// `url` è il link di origine (finisce nel campo "fonte"). Tollera risposte incomplete.
+export function bozzaDaImportazione(r, url) {
+  const ingredienti =
+    Array.isArray(r.ingredienti) && r.ingredienti.length > 0
+      ? r.ingredienti.map((ing, i) => ({
+          id: 'imp' + i,
+          nome: ing.nome || '',
+          quantita: Number(ing.quantita) || 0,
+          unita: ing.unita || 'pz'
+        }))
+      : [{ id: 'imp0', nome: '', quantita: 1, unita: 'pz' }];
+  return {
+    titolo: r.titolo || '',
+    ingredienti,
+    preparazione: r.preparazione || '',
+    porzioniBase: r.porzioniBase || 4,
+    tempoPreparazioneMin: r.tempoPreparazioneMin || 0,
+    tempoCotturaMin: r.tempoCotturaMin || 0,
+    bonta: 3,
+    prezzo: 1,
+    notePersonali: '',
+    fonte: url || '',
+    categoria: Array.isArray(r.categoria) ? r.categoria : [],
+    tagDieta: Array.isArray(r.tagDieta) ? r.tagDieta.join(', ') : ''
+  };
+}

@@ -48,3 +48,6 @@ export function dataDelGiorno(indiceGiorno, oggi = OGGI) {
   d.setDate(d.getDate() + (indiceGiorno - oggiIndex));
   return formattaDataLocale(d);
 }
+
+// Giorni della settimana, nell'ordine usato dall'app (indice 0 = Lunedì ... 6 = Domenica)
+export const GIORNI_SETTIMANA = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];

@@ -4,8 +4,8 @@ import { nuovoId } from '../utils/id.js';
 
 // Dati e operazioni del piano pasti. Ogni voce: { id, data, pasto, recipeId, porzioniScelte }.
 // Non conosce l'interfaccia (select, toast, modali): quella resta nel componente.
-export function useMealPlan({ valoreIniziale, segnalaSalvataggio }) {
-  const [mealPlan, setMealPlan] = usePersistentState(STORAGE_KEYS.mealPlan, valoreIniziale, segnalaSalvataggio);
+export function useMealPlan({ segnalaSalvataggio }) {
+  const [mealPlan, setMealPlan] = usePersistentState(STORAGE_KEYS.mealPlan, [], segnalaSalvataggio);
 
   // Il pasto pianificato in uno slot (data + pranzo/cena), se c'è
   const trovaPasto = (data, pasto) => mealPlan.find((m) => m.data === data && m.pasto === pasto);

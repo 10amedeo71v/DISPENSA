@@ -4,8 +4,7 @@
 // Richiede la variabile d'ambiente GEMINI_API_KEY impostata su Netlify
 // (la stessa già usata da importa-ricetta).
 
-// Se Google ritira questo modello, va cambiato qui E in importa-ricetta.js.
-const MODELLO_GEMINI = 'gemini-3.6-flash';
+import { chiediJsonAGemini } from './lib/gemini.js';
 
 const MAX_PRODOTTI = 80; // oltre questa soglia tagliamo l'elenco per contenere i token
 const MAX_TITOLI_DA_EVITARE = 10;
@@ -120,35 +119,7 @@ async function chiediRicettaAGemini({ dispensa, evita, apiKey }) {
     testo += `\n\nHo già visto queste proposte, suggeriscine una DIVERSA:\n${evita.map((t) => `- ${t}`).join('\n')}`;
   }
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODELLO_GEMINI}:generateContent?key=${apiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: testo }] }],
-        generationConfig: { response_mime_type: 'application/json' }
-      })
-    }
-  );
-
-  if (!res.ok) {
-    const testoErrore = await res.text();
-    throw new Error(`Gemini ha risposto con un errore: ${testoErrore.slice(0, 200)}`);
-  }
-
-  const dati = await res.json();
-  const testoJson = dati?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!testoJson) {
-    throw new Error('Gemini non ha restituito nulla di utilizzabile (magari ha bloccato il contenuto).');
-  }
-
-  let grezza;
-  try {
-    grezza = JSON.parse(testoJson);
-  } catch {
-    throw new Error('Gemini ha restituito una risposta non leggibile. Riprova.');
-  }
+  const grezza = await chiediJsonAGemini({ apiKey, parts: [{ text: testo }] });
   return normalizzaRicetta(grezza);
 }
 
